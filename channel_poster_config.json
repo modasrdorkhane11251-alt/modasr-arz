@@ -1,0 +1,8 @@
+{
+  "isEnabled": true,
+  "channelId": "@MODASR_ARZ",
+  "intervalMinutes": 60,
+  "postMode": "image_card_and_summary",
+  "lastPostTime": 1791241180697,
+  "lastPostStatus": "success"
+}
