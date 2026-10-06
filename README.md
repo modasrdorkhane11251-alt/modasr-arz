@@ -1,77 +1,84 @@
-# 💎 MØD†SR.ƪARZ - ربات و مینی‌اپ جامع استعلام لحظه‌ای نرخ طلا، ارز و کریپتو
+# 💎 MODASR ARZ
 
-سامانه هوشمند و مدرن استعلام زنده نرخ ارزهای فیات (دلار، یورو، درهم و...)، انواع طلا و سکه (طلای ۱۸ عیار، آبشده، سکه امامی، ربع و نیم)، رمزارزها (تتر، بیت‌کوین، اتریوم، تون‌کوین و ۱۰۰+ آلت‌کوین) همراه با کارت‌های گرافیکی مدرن، مینی‌اپ تلگرام و سیستم هشدار خطا به پیوی ادمین.
+<div align="center">
+
+### 🚀 Enterprise-Grade Telegram Market Intelligence Platform
+
+**Real-Time Gold • Currency • Cryptocurrency • Telegram Mini App • Admin Dashboard**
+
+![Version](https://img.shields.io/badge/version-v1.0-blue)
+![Node.js](https://img.shields.io/badge/Node.js-22+-green)
+![Telegram](https://img.shields.io/badge/Telegram-Mini_App-2CA5E0)
+![License](https://img.shields.io/badge/license-MIT-success)
+
+</div>
 
 ---
 
-## 🚀 نصب و راه‌اندازی فوق‌العاده آسان روی سرور مجازی (VPS)
+## 🌍 Overview
 
-تنها با اجرای **یک خط دستور** در ترمینال سرور مجازی (اوبونتو / دبیان)، همه چیز شامل Node.js، پکیج‌ها، بیلد، تنظیمات و اجرای دائم به صورت تعاملی نصب می‌شود:
+MODASR ARZ is a modern SaaS-style market intelligence platform designed for Telegram communities, traders, financial channels, and digital businesses.
+
+### Features
+
+- 🤖 Telegram Bot
+- 📱 Telegram Mini App
+- 🌐 Admin Dashboard
+- 📊 Real-Time Market Monitoring
+- 🔔 Automated Channel Broadcasting
+- 👑 Admin Management System
+
+---
+
+## 🚀 Quick Start
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/YOUR_REPO.git && cd YOUR_REPO && sudo bash install.sh
+git clone https://github.com/modasrdorkhane11251-alt/modasr-arz.git
+cd modasr-arz
+chmod +x install.sh
+bash install.sh
 ```
-
-در طول نصب، اسکریپت موارد زیر را از شما سوال می‌کند (با مقادیر پیش‌فرض آماده):
-1. **توکن ربات تلگرام (Bot Token)**
-2. **شناسه عددی ادمین (Admin User ID)**
-3. **یوزرنیم ربات تلگرام (Bot Username)**
-4. **دامنه یا ساب‌دامین (اختیاری جهت اتصال Nginx و SSL رایگان)**
-5. **پورت اجرای برنامه (پیش‌فرض: ۳۰۰۰)**
-6. **رمز پنل مدیریت وب (اگر خالی بگذارید، یک رمز تصادفی ساخته و نمایش داده می‌شود)**
 
 ---
 
-## 🔐 نکات امنیتی
-
-- **توکن و رمزها فقط داخل فایل `.env`** روی سرور هستند و هیچ‌وقت داخل گیت قرار نمی‌گیرند (`.env` در `.gitignore` است).
-- **پنل مدیریت وب با رمز محافظت می‌شود.** هنگام باز کردن پنل، مرورگر نام کاربری و رمز می‌خواهد؛ نام کاربری هر چیزی می‌تواند باشد و رمز همان `ADMIN_PASSWORD` است. اگر این متغیر تنظیم نشده باشد، تمام APIهای مدیریتی بسته می‌مانند.
-- **وب‌هوک تلگرام با Secret Token تأیید می‌شود** تا کسی نتواند درخواست جعلی (مثلاً با آیدی ادمین) به ربات بفرستد. اگر قبلاً وب‌هوک ست کرده‌اید، یک‌بار از پنل دوباره «Set Webhook» بزنید.
-- برای امنیت بیشتر حتماً از دامین + HTTPS استفاده کنید (نصب‌کننده Nginx و SSL رایگان را خودش راه می‌اندازد)، چون رمز پنل در HTTP ساده رمزنگاری نمی‌شود.
-- اگر توکن ربات جایی لو رفت، از @BotFather دستور `/revoke` را بزنید و توکن جدید را در `.env` بگذارید و `pm2 restart modasr-bot` کنید.
-
-## ⚙️ نصب دستی (بدون نصب‌کننده)
+## ⚙️ Operations
 
 ```bash
-cp .env.example .env     # سپس BOT_TOKEN, ADMIN_ID, ADMIN_PASSWORD را ویرایش کنید
-npm install
-npm run build
-pm2 start server.js --name modasr-bot
+pm2 logs modasr-bot
+pm2 restart modasr-bot
+pm2 status
+bash update.sh
 ```
 
 ---
 
-## 🌟 امکانات و قابلیت‌های کلیدی
+## 🗺 Roadmap
 
-- ⚡️ **اتصال مستقیم Long Polling و Webhook:** بدون نیاز به پورت باز یا دامنه برای کارکرد ربات تلگرام.
-- 🎨 **تولید خودکار کارت‌های شیشه‌ای (Visual Price Cards):** ایجاد تصاویر با کیفیت از قیمت، نوسان ۲۴ ساعته و سقف/کف قیمت با موتور اختصاصی.
-- 👑 **پشتیبانی کامل از ایموجی‌های پرمیوم تلگرام:** با فرمت `tg://emoji` بدون به‌هم‌ریختگی.
-- 📢 **ارسال‌کننده خودکار ساعتی به کانال (Channel Poster):** ارسال بولتن تحلیلی همراه با تصویر تابلوی ۹ ارز برتر بازار به کانال تلگرام شما.
-- 📱 **مینی‌اپ اختصاصی تلگرام (Telegram Mini App):** پنل تعاملی واکنش‌گرا با تابلوی زنده قیمت‌ها و ماشین‌حساب مبدل ارز.
-- 🚨 **سامانه هشدار و گزارش لحظه‌ای خطاها به پیوی ادمین:** اطلاع‌رسانی فوری در صورت قطعی وب‌سرویس یا باگ، همراه با امکان ارسال گزارش توسط کاربران (`/report`).
-- 🖥 **پنل وب مدیریت:** مدیریت دکمه‌های شیشه‌ای، افزودن یا جایگزینی ایموجی‌های پرمیوم، لاگ‌های زنده و پیام همگانی.
+### v1
+- Telegram Bot
+- Mini App
+- Admin Dashboard
 
----
+### v2
+- Watchlists
+- Notifications
+- Market Alerts
 
-## 🛠 دستورات مفید سرور (PM2)
-
-| عملکرد | دستور در ترمینال |
-| :--- | :--- |
-| **مشاهده لاگ‌های زنده ربات** | `pm2 logs modasr-bot` |
-| **مشاهده وضعیت مصرف منابع** | `pm2 status` |
-| **ری‌استارت کردن ربات** | `pm2 restart modasr-bot` |
-| **توقف موقت** | `pm2 stop modasr-bot` |
-| **به‌روزرسانی خودکار از گیت** | `bash update.sh` |
+### v3
+- AI Market Analysis
+- Portfolio Tracking
 
 ---
 
-## 📋 دستورات ربات در تلگرام
+## ⭐ Support
 
-- `تتر` یا `100 تتر` : استعلام قیمت و معادل تومانی و دلاری
-- `دلار` یا `50 دلار` : استعلام اسکناس دلار بازار آزاد
-- `طلا` یا `سکه امامی` یا `مظنه` : نرخ روز طلا و مسکوکات
-- `بیت کوین` یا `اتریوم` یا `سولانا` : قیمت رمزارزها به دلار و تومان
-- `/بازار` : دریافت تصویر تابلوی ۳×۳ بازار و بولتن کلی
-- `/app` یا `/miniapp` : باز کردن مینی‌اپ اختصاصی
-- `/report <متن گزارش>` : ارسال گزارش باگ یا پیشنهاد مستقیماً به پیوی ادمین
-- `/admin` : باز کردن پنل مدیریت اختصاصی در پیوی ادمین
+If this project helps you:
+
+- ⭐ Star the repository
+- 🍴 Fork the repository
+- 🚀 Deploy your own instance
+
+---
+
+### 💎 MODASR ARZ
+Next Generation Telegram Market Intelligence Platform
