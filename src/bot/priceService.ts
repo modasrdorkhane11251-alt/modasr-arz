@@ -76,7 +76,7 @@ export class PriceService {
    */
   static async getTgjuData(): Promise<any> {
     const now = Date.now();
-    if (this.cachedTgju && now - this.lastTgjuFetchTime < 30_000) {
+    if (this.cachedTgju && now - this.lastTgjuFetchTime < 6_000) {
       return this.cachedTgju;
     }
 
@@ -215,7 +215,7 @@ export class PriceService {
    */
   static async getGoldPrice(): Promise<GoldInfo | null> {
     const now = Date.now();
-    if (this.cachedGoldInfo && now - this.lastGoldFetchTime < 30_000) {
+    if (this.cachedGoldInfo && now - this.lastGoldFetchTime < 5_000) {
       return this.cachedGoldInfo;
     }
 
@@ -329,20 +329,20 @@ export class PriceService {
   }
 
   /**
-   * Get all cryptocurrency data directly from Binance live feed and TGJU dollar rate
+   * Get all cryptocurrency data directly from Fast-Creat Nobitex Live API + Binance live feed + TGJU
    */
   static async getCoinData(): Promise<Record<string, CoinInfo>> {
     const now = Date.now();
-    if (this.cachedCoins && now - this.lastCoinsFetchTime < 15_000) {
+    // Cache for only 4 seconds to ensure 100% fresh live updates
+    if (this.cachedCoins && now - this.lastCoinsFetchTime < 4_000) {
       return this.cachedCoins;
     }
 
     let coins: Record<string, CoinInfo> = {};
 
-    // 1. Fetch live Dollar (US Currency) and Tether (Cryptocurrency) from TGJU
+    // 1. Fetch live Dollar and Gold rates from TGJU
     const tgju = await this.getTgjuData();
     
-    // US Dollar cash rate (اسکناس دلار آمریکا در بازار آزاد)
     let dollarToman = 268300;
     let dollarChange = 0.0;
     let dollarHigh = 268600;
@@ -355,7 +355,6 @@ export class PriceService {
       if (tgju['price_dollar_rl'].l) dollarLow = Math.round(this.parseNumberFromRaw(tgju['price_dollar_rl'].l) / 10);
     }
 
-    // Tether Cryptocurrency rate (رمزارز تتر دیجیتال / USDT)
     let tetherToman = dollarToman;
     let tetherChange = dollarChange;
     let tetherHigh = Math.round(dollarToman * 1.008);
@@ -368,7 +367,108 @@ export class PriceService {
       if (tgju['crypto-tether-irr'].l) tetherLow = Math.round(this.parseNumberFromRaw(tgju['crypto-tether-irr'].l) / 10);
     }
 
-    // A. US Dollar (واحد پول آمریکا)
+    // 2. PRIMARY LIVE FEED 1: Nobitex Official Public Market Stats API (Direct live Tehran rates)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
+      const res = await fetch('https://api.nobitex.ir/market/stats', {
+        signal: controller.signal,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      }).catch(() => null);
+      clearTimeout(timeoutId);
+
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.status === 'ok' && json.stats) {
+          // Check USDT rate first
+          if (json.stats['usdt-rl'] && json.stats['usdt-rl'].latest) {
+            const usdtRl = parseFloat(json.stats['usdt-rl'].latest) || 0;
+            if (usdtRl > 0) {
+              tetherToman = Math.round(usdtRl / 10);
+              tetherChange = parseFloat(json.stats['usdt-rl'].dayChange || '0') || 0;
+            }
+          }
+
+          // Parse all crypto pairs
+          for (const [pair, stats] of Object.entries(json.stats as Record<string, any>)) {
+            if (!stats || !stats.latest) continue;
+            if (pair.endsWith('-rl')) {
+              const symUpper = pair.replace('-rl', '').toUpperCase();
+              const symLower = symUpper.toLowerCase();
+              const tomanPrice = Math.round((parseFloat(stats.latest) || 0) / 10);
+              const changePercent = parseFloat(stats.dayChange || '0') || 0;
+              const usdtPrice = tetherToman > 0 ? parseFloat((tomanPrice / tetherToman).toFixed(4)) : 1;
+
+              const coinObj: CoinInfo = {
+                name: symUpper,
+                symbol: symUpper,
+                usdt: usdtPrice,
+                irr: tomanPrice,
+                dayChange: changePercent,
+                dayHighToman: Math.round(tomanPrice * 1.015),
+                dayLowToman: Math.round(tomanPrice * 0.985),
+                dayHighUsd: parseFloat((usdtPrice * 1.015).toFixed(4)),
+                dayLowUsd: parseFloat((usdtPrice * 0.985).toFixed(4)),
+              };
+
+              coins[symLower] = coinObj;
+              coins[symUpper] = coinObj;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Nobitex Public API live fetch error:', e);
+    }
+
+    // 2. PRIMARY LIVE FEED 2: Fast-Creat Nobitex v2 Live API (Backup & extended pairs)
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 4500);
+      const res = await fetch(BOT_CONFIG.fastApiUrl, { signal: controller.signal }).catch(() => null);
+      clearTimeout(timeoutId);
+
+      if (res && res.ok) {
+        const json = await res.json().catch(() => null);
+        if (json && json.ok && json.result && typeof json.result === 'object') {
+          for (const [sym, data] of Object.entries(json.result as Record<string, any>)) {
+            if (!data) continue;
+            const symUpper = sym.toUpperCase();
+            const symLower = sym.toLowerCase();
+            const tomanPrice = parseFloat(data.irr || '0') || 0;
+            const usdtPrice = parseFloat(data.usdt || '0') || (tetherToman > 0 ? parseFloat((tomanPrice / tetherToman).toFixed(4)) : 0);
+            const changePercent = parseFloat(data.dayChange || '0') || 0;
+
+            if (symUpper === 'USDT' && tomanPrice > 0) {
+              tetherToman = tomanPrice;
+              tetherChange = changePercent;
+            }
+
+            const coinObj: CoinInfo = {
+              name: data.name || symUpper,
+              symbol: symUpper,
+              usdt: usdtPrice > 0 ? usdtPrice : (tetherToman > 0 ? parseFloat((tomanPrice / tetherToman).toFixed(4)) : 1),
+              irr: tomanPrice,
+              dayChange: changePercent,
+              dayHighToman: Math.round(tomanPrice * 1.015),
+              dayLowToman: Math.round(tomanPrice * 0.985),
+              dayHighUsd: usdtPrice > 0 ? parseFloat((usdtPrice * 1.015).toFixed(4)) : 1,
+              dayLowUsd: usdtPrice > 0 ? parseFloat((usdtPrice * 0.985).toFixed(4)) : 1,
+            };
+
+            coins[symLower] = coinObj;
+            coins[symUpper] = coinObj;
+            if (data.name) {
+              coins[data.name] = coinObj;
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Fast-Creat Nobitex API live fetch error:', e);
+    }
+
+    // Set standard USD and USDT
     const usdCoin: CoinInfo = {
       name: 'دلار آمریکا',
       symbol: 'USD',
@@ -385,24 +485,24 @@ export class PriceService {
     coins['دلار'] = usdCoin;
     coins['دلار آمریکا'] = usdCoin;
 
-    // B. Tether USDT (ارز دیجیتال / استیبل‌کوین تتر)
-    const usdtCoin: CoinInfo = {
-      name: 'تتر',
-      symbol: 'USDT',
-      usdt: 1.0,
-      irr: tetherToman,
-      dayChange: tetherChange,
-      dayHighToman: tetherHigh,
-      dayLowToman: tetherLow,
-      dayHighUsd: 1.0,
-      dayLowUsd: 1.0,
-    };
-    coins['usdt'] = usdtCoin;
-    coins['tether'] = usdtCoin;
-    coins['تتر'] = usdtCoin;
-    coins['تتر دیجیتال'] = usdtCoin;
+    if (!coins['usdt']) {
+      const usdtCoin: CoinInfo = {
+        name: 'تتر',
+        symbol: 'USDT',
+        usdt: 1.0,
+        irr: tetherToman,
+        dayChange: tetherChange,
+        dayHighToman: tetherHigh,
+        dayLowToman: tetherLow,
+        dayHighUsd: 1.0,
+        dayLowUsd: 1.0,
+      };
+      coins['usdt'] = usdtCoin;
+      coins['tether'] = usdtCoin;
+      coins['تتر'] = usdtCoin;
+    }
 
-    // 2. Global Tickers from Binance
+    // 3. SECONDARY LIVE FEED: Global Tickers from Binance
     try {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 4000);
@@ -424,12 +524,15 @@ export class PriceService {
               const highUsd = parseFloat(item.highPrice || String(usdtPrice * 1.015));
               const lowUsd = parseFloat(item.lowPrice || String(usdtPrice * 0.985));
 
-              const tomanPrice = Math.round(usdtPrice * tetherToman);
-              const highToman = Math.round(highUsd * tetherToman);
-              const lowToman = Math.round(lowUsd * tetherToman);
+              const effectiveTether = coins['usdt']?.irr || tetherToman;
+              const tomanPrice = Math.round(usdtPrice * effectiveTether);
+              const highToman = Math.round(highUsd * effectiveTether);
+              const lowToman = Math.round(lowUsd * effectiveTether);
 
+              // Overwrite or populate with high-precision Binance data
+              const existingName = coins[symLower]?.name || symUpper;
               const coinObj: CoinInfo = {
-                name: symUpper,
+                name: existingName,
                 symbol: symUpper,
                 usdt: usdtPrice,
                 irr: tomanPrice,
@@ -590,150 +693,162 @@ export class PriceService {
     oil: any[];
     serverTime: string;
   }> {
-    const [coins, gold18, sekeEmami, sekeBahar, mesghal, nim, rob, gerami, brent, wti, gas, usd, eur, aed, gbp, trylira, cny, cad] = await Promise.all([
-      this.getCoinData(),
-      this.getGoldOrCoinItem('gold'),
-      this.getGoldOrCoinItem('seke_emami'),
-      this.getGoldOrCoinItem('seke_bahar'),
-      this.getGoldOrCoinItem('mazaneh'),
-      this.getGoldOrCoinItem('nim'),
-      this.getGoldOrCoinItem('rob'),
-      this.getGoldOrCoinItem('gerami'),
-      this.getOilPrice('brent'),
-      this.getOilPrice('wti'),
-      this.getOilPrice('gas'),
-      this.resolveAnyAsset('usd'),
-      this.resolveAnyAsset('eur'),
-      this.resolveAnyAsset('aed'),
-      this.resolveAnyAsset('gbp'),
-      this.resolveAnyAsset('try'),
-      this.resolveAnyAsset('cny'),
-      this.resolveAnyAsset('cad'),
-    ]);
+    try {
+      const [coins, gold18, sekeEmami, sekeBahar, mesghal, nim, rob, gerami, brent, wti, gas, usd, eur, aed, gbp, trylira, cny, cad] = await Promise.all([
+        this.getCoinData().catch(() => ({} as Record<string, CoinInfo>)),
+        this.getGoldOrCoinItem('gold').catch(() => ({ title: 'طلای ۱۸ عیار', tomanPrice: 26327800, highToman: 26676000, lowToman: 26188900, dayChangePercent: 0.31 })),
+        this.getGoldOrCoinItem('seke_emami').catch(() => ({ title: 'سکه امامی', tomanPrice: 288500000, highToman: 291000000, lowToman: 286000000, dayChangePercent: 0.45 })),
+        this.getGoldOrCoinItem('seke_bahar').catch(() => ({ title: 'سکه بهار آزادی', tomanPrice: 268000000, highToman: 270000000, lowToman: 265000000, dayChangePercent: 0.20 })),
+        this.getGoldOrCoinItem('mazaneh').catch(() => ({ title: 'مثقال طلا', tomanPrice: 114000000, highToman: 115000000, lowToman: 113000000, dayChangePercent: 0.30 })),
+        this.getGoldOrCoinItem('nim').catch(() => ({ title: 'نیم سکه', tomanPrice: 154000000, highToman: 156000000, lowToman: 152000000, dayChangePercent: 0.25 })),
+        this.getGoldOrCoinItem('rob').catch(() => ({ title: 'ربع سکه', tomanPrice: 94000000, highToman: 96000000, lowToman: 92000000, dayChangePercent: 0.15 })),
+        this.getGoldOrCoinItem('gerami').catch(() => ({ title: 'سکه گرمی', tomanPrice: 48000000, highToman: 49000000, lowToman: 47000000, dayChangePercent: 0.10 })),
+        this.getOilPrice('brent').catch(() => ({ key: 'oil_brent', name: 'Brent Crude Oil', symbol: 'BRENT', category: 'oil' as const, priceUsd: 102.25, priceToman: 27433675, dayChange: 0.15 })),
+        this.getOilPrice('wti').catch(() => ({ key: 'oil_wti', name: 'WTI Crude Oil', symbol: 'WTI', category: 'oil' as const, priceUsd: 98.40, priceToman: 26400720, dayChange: -0.20 })),
+        this.getOilPrice('gas').catch(() => ({ key: 'gas', name: 'Natural Gas', symbol: 'GAS', category: 'commodity' as const, priceUsd: 3.12, priceToman: 837096, dayChange: 1.40 })),
+        this.resolveAnyAsset('usd').catch(() => null),
+        this.resolveAnyAsset('eur').catch(() => null),
+        this.resolveAnyAsset('aed').catch(() => null),
+        this.resolveAnyAsset('gbp').catch(() => null),
+        this.resolveAnyAsset('try').catch(() => null),
+        this.resolveAnyAsset('cny').catch(() => null),
+        this.resolveAnyAsset('cad').catch(() => null),
+      ]);
 
-    // Format helpers
-    const makeItem = (
-      key: string,
-      symbol: string,
-      name: string,
-      persianName: string,
-      category: 'crypto' | 'gold' | 'fiat' | 'oil',
-      priceToman: number,
-      priceUsd: number | undefined,
-      dayChange: number,
-      highToman?: number,
-      lowToman?: number
-    ) => {
-      const sparkline = this.generateSparklinePoints(priceToman || (priceUsd ? priceUsd * 268300 : 1000), dayChange);
-      return {
-        key,
-        symbol,
-        name,
-        persianName,
-        category,
-        priceToman: Math.round(priceToman),
-        priceUsd: priceUsd ? parseFloat(priceUsd.toFixed(priceUsd < 1 ? 4 : 2)) : undefined,
-        dayChange: parseFloat(dayChange.toFixed(2)),
-        highToman: highToman ? Math.round(highToman) : Math.round(priceToman * 1.015),
-        lowToman: lowToman ? Math.round(lowToman) : Math.round(priceToman * 0.985),
-        sparkline,
+      // Format helpers
+      const makeItem = (
+        key: string,
+        symbol: string,
+        name: string,
+        persianName: string,
+        category: 'crypto' | 'gold' | 'fiat' | 'oil',
+        priceToman: number,
+        priceUsd: number | undefined,
+        dayChange: number,
+        highToman?: number,
+        lowToman?: number
+      ) => {
+        const sparkline = this.generateSparklinePoints(priceToman || (priceUsd ? priceUsd * 268300 : 1000), dayChange);
+        return {
+          key,
+          symbol,
+          name,
+          persianName,
+          category,
+          priceToman: Math.round(priceToman || 0),
+          priceUsd: priceUsd ? parseFloat(priceUsd.toFixed(priceUsd < 1 ? 4 : 2)) : undefined,
+          dayChange: parseFloat((dayChange || 0).toFixed(2)),
+          highToman: highToman ? Math.round(highToman) : Math.round((priceToman || 1000) * 1.015),
+          lowToman: lowToman ? Math.round(lowToman) : Math.round((priceToman || 1000) * 0.985),
+          sparkline,
+        };
       };
-    };
 
-    // 1. Highlights
-    const dollarToman = usd?.priceToman || 268300;
-    const usdtCoin = coins['usdt'] || { usdt: 1.0, irr: 268491, dayChange: 0.0 };
-    const btcCoin = coins['btc'] || { usdt: 86450, irr: 23211580000, dayChange: 1.8 };
-    const tonCoin = coins['ton'] || { usdt: 1.6, irr: 429580, dayChange: 0.5 };
+      // 1. Highlights
+      const dollarToman = usd?.priceToman || 268300;
+      const usdtCoin = coins['usdt'] || { usdt: 1.0, irr: 268491, dayChange: 0.0 };
+      const btcCoin = coins['btc'] || { usdt: 86450, irr: 23211580000, dayChange: 1.8 };
+      const tonCoin = coins['ton'] || { usdt: 1.6, irr: 429580, dayChange: 0.5 };
 
-    const highlights = [
-      makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, usd?.dayChange || 0.0),
-      makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', usdtCoin.irr, 1.0, usdtCoin.dayChange || 0.0),
-      makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', gold18.tomanPrice, gold18.tomanPrice / dollarToman, gold18.dayChangePercent),
-      makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', sekeEmami.tomanPrice, sekeEmami.tomanPrice / dollarToman, sekeEmami.dayChangePercent),
-      makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btcCoin.irr, btcCoin.usdt, btcCoin.dayChange),
-      makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', tonCoin.irr, tonCoin.usdt, tonCoin.dayChange),
-    ];
+      const highlights = [
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, usd?.dayChange || 0.0),
+        makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', usdtCoin.irr, 1.0, usdtCoin.dayChange || 0.0),
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', gold18.tomanPrice, gold18.tomanPrice / dollarToman, gold18.dayChangePercent),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', sekeEmami.tomanPrice, sekeEmami.tomanPrice / dollarToman, sekeEmami.dayChangePercent),
+        makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btcCoin.irr, btcCoin.usdt, btcCoin.dayChange),
+        makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', tonCoin.irr, tonCoin.usdt, tonCoin.dayChange),
+      ];
 
-    // 2. Cryptocurrencies
-    const cryptoKeys = [
-      { key: 'btc', name: 'Bitcoin', fa: 'بیت کوین' },
-      { key: 'eth', name: 'Ethereum', fa: 'اتریوم' },
-      { key: 'usdt', name: 'Tether', fa: 'تتر دیجیتال' },
-      { key: 'ton', name: 'Toncoin', fa: 'تون کوین' },
-      { key: 'sol', name: 'Solana', fa: 'سولانا' },
-      { key: 'bnb', name: 'BNB', fa: 'بایننس کوین' },
-      { key: 'trx', name: 'Tron', fa: 'ترون' },
-      { key: 'doge', name: 'Dogecoin', fa: 'دوج کوین' },
-      { key: 'xrp', name: 'Ripple', fa: 'ریپل' },
-      { key: 'ada', name: 'Cardano', fa: 'کاردانو' },
-      { key: 'shib', name: 'Shiba Inu', fa: 'شیبا اینو' },
-      { key: 'pepe', name: 'Pepe', fa: 'پپه' },
-      { key: 'not', name: 'Notcoin', fa: 'نات کوین' },
-      { key: 'ltc', name: 'Litecoin', fa: 'لایت کوین' },
-      { key: 'bch', name: 'Bitcoin Cash', fa: 'بیت کوین کش' },
-      { key: 'avax', name: 'Avalanche', fa: 'اولنچ' },
-      { key: 'link', name: 'Chainlink', fa: 'چین لینک' },
-      { key: 'sui', name: 'Sui', fa: 'سویی' },
-      { key: 'near', name: 'Near Protocol', fa: 'نیر پروتکل' },
-    ];
+      // 2. Cryptocurrencies
+      const cryptoKeys = [
+        { key: 'btc', name: 'Bitcoin', fa: 'بیت کوین' },
+        { key: 'eth', name: 'Ethereum', fa: 'اتریوم' },
+        { key: 'usdt', name: 'Tether', fa: 'تتر دیجیتال' },
+        { key: 'ton', name: 'Toncoin', fa: 'تون کوین' },
+        { key: 'sol', name: 'Solana', fa: 'سولانا' },
+        { key: 'bnb', name: 'BNB', fa: 'بایننس کوین' },
+        { key: 'trx', name: 'Tron', fa: 'ترون' },
+        { key: 'doge', name: 'Dogecoin', fa: 'دوج کوین' },
+        { key: 'xrp', name: 'Ripple', fa: 'ریپل' },
+        { key: 'ada', name: 'Cardano', fa: 'کاردانو' },
+        { key: 'shib', name: 'Shiba Inu', fa: 'شیبا اینو' },
+        { key: 'pepe', name: 'Pepe', fa: 'پپه' },
+        { key: 'not', name: 'Notcoin', fa: 'نات کوین' },
+        { key: 'ltc', name: 'Litecoin', fa: 'لایت کوین' },
+        { key: 'bch', name: 'Bitcoin Cash', fa: 'بیت کوین کش' },
+        { key: 'avax', name: 'Avalanche', fa: 'اولنچ' },
+        { key: 'link', name: 'Chainlink', fa: 'چین لینک' },
+        { key: 'sui', name: 'Sui', fa: 'سویی' },
+        { key: 'near', name: 'Near Protocol', fa: 'نیر پروتکل' },
+      ];
 
-    const crypto = cryptoKeys.map((c) => {
-      const coin = coins[c.key] || { usdt: 1.0, irr: dollarToman, dayChange: 0.0 };
-      return makeItem(
-        c.key,
-        c.key.toUpperCase(),
-        c.name,
-        c.fa,
-        'crypto',
-        coin.irr || Math.round(coin.usdt * dollarToman),
-        coin.usdt,
-        coin.dayChange || 0.0,
-        coin.dayHighToman,
-        coin.dayLowToman
-      );
-    });
+      const crypto = cryptoKeys.map((c) => {
+        const coin = coins[c.key] || { usdt: 1.0, irr: dollarToman, dayChange: 0.0 };
+        return makeItem(
+          c.key,
+          c.key.toUpperCase(),
+          c.name,
+          c.fa,
+          'crypto',
+          coin.irr || Math.round((coin.usdt || 1) * dollarToman),
+          coin.usdt,
+          coin.dayChange || 0.0,
+          coin.dayHighToman,
+          coin.dayLowToman
+        );
+      });
 
-    // 3. Gold & Coins
-    const gold = [
-      makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', gold18.tomanPrice, gold18.tomanPrice / dollarToman, gold18.dayChangePercent, gold18.highToman, gold18.lowToman),
-      makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', Math.round(gold18.tomanPrice * 1.333), (gold18.tomanPrice * 1.333) / dollarToman, gold18.dayChangePercent),
-      makeItem('mesghal', 'MESGHAL', 'Mesghal Gold', 'مظنه مثقال طلا (آبشده)', 'gold', mesghal.tomanPrice, mesghal.tomanPrice / dollarToman, mesghal.dayChangePercent, mesghal.highToman, mesghal.lowToman),
-      makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی (طرح جدید)', 'gold', sekeEmami.tomanPrice, sekeEmami.tomanPrice / dollarToman, sekeEmami.dayChangePercent, sekeEmami.highToman, sekeEmami.lowToman),
-      makeItem('seke_bahar', 'BAHAR', 'Seke Bahar Azadi', 'سکه بهار آزادی (طرح قدیم)', 'gold', sekeBahar.tomanPrice, sekeBahar.tomanPrice / dollarToman, sekeBahar.dayChangePercent, sekeBahar.highToman, sekeBahar.lowToman),
-      makeItem('seke_nim', 'NIM', 'Half Coin', 'نیم سکه بهار آزادی', 'gold', nim.tomanPrice, nim.tomanPrice / dollarToman, nim.dayChangePercent, nim.highToman, nim.lowToman),
-      makeItem('seke_rob', 'ROB', 'Quarter Coin', 'ربع سکه بهار آزادی', 'gold', rob.tomanPrice, rob.tomanPrice / dollarToman, rob.dayChangePercent, rob.highToman, rob.lowToman),
-      makeItem('seke_gerami', 'GERAMI', 'Gerami Coin', 'سکه گرمی', 'gold', gerami.tomanPrice, gerami.tomanPrice / dollarToman, gerami.dayChangePercent, gerami.highToman, gerami.lowToman),
-      makeItem('ons', 'XAU', 'Gold Ounce', 'انس جهانی طلا', 'gold', Math.round(2655 * dollarToman), 2655.40, 0.28),
-      makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', 553270, 553270 / dollarToman, 0.15),
-    ];
+      // 3. Gold & Coins
+      const gold = [
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', gold18.tomanPrice, gold18.tomanPrice / dollarToman, gold18.dayChangePercent, gold18.highToman, gold18.lowToman),
+        makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', Math.round(gold18.tomanPrice * 1.333), (gold18.tomanPrice * 1.333) / dollarToman, gold18.dayChangePercent),
+        makeItem('mesghal', 'MESGHAL', 'Mesghal Gold', 'مظنه مثقال طلا (آبشده)', 'gold', mesghal.tomanPrice, mesghal.tomanPrice / dollarToman, mesghal.dayChangePercent, mesghal.highToman, mesghal.lowToman),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی (طرح جدید)', 'gold', sekeEmami.tomanPrice, sekeEmami.tomanPrice / dollarToman, sekeEmami.dayChangePercent, sekeEmami.highToman, sekeEmami.lowToman),
+        makeItem('seke_bahar', 'BAHAR', 'Seke Bahar Azadi', 'سکه بهار آزادی (طرح قدیم)', 'gold', sekeBahar.tomanPrice, sekeBahar.tomanPrice / dollarToman, sekeBahar.dayChangePercent, sekeBahar.highToman, sekeBahar.lowToman),
+        makeItem('seke_nim', 'NIM', 'Half Coin', 'نیم سکه بهار آزادی', 'gold', nim.tomanPrice, nim.tomanPrice / dollarToman, nim.dayChangePercent, nim.highToman, nim.lowToman),
+        makeItem('seke_rob', 'ROB', 'Quarter Coin', 'ربع سکه بهار آزادی', 'gold', rob.tomanPrice, rob.tomanPrice / dollarToman, rob.dayChangePercent, rob.highToman, rob.lowToman),
+        makeItem('seke_gerami', 'GERAMI', 'Gerami Coin', 'سکه گرمی', 'gold', gerami.tomanPrice, gerami.tomanPrice / dollarToman, gerami.dayChangePercent, gerami.highToman, gerami.lowToman),
+        makeItem('ons', 'XAU', 'Gold Ounce', 'انس جهانی طلا', 'gold', Math.round(2655 * dollarToman), 2655.40, 0.28),
+        makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', 553270, 553270 / dollarToman, 0.15),
+      ];
 
-    // 4. Fiat Currencies
-    const fiat = [
-      makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, usd?.dayChange || 0.0, usd?.highToman, usd?.lowToman),
-      makeItem('eur', 'EUR', 'Euro', 'یورو اروپا', 'fiat', eur?.priceToman || 302960, eur?.priceUsd || 1.13, eur?.dayChange || 0.0),
-      makeItem('aed', 'AED', 'UAE Dirham', 'درهم امارات', 'fiat', aed?.priceToman || 73440, aed?.priceUsd || 0.27, aed?.dayChange || 0.0),
-      makeItem('gbp', 'GBP', 'British Pound', 'پوند انگلیس', 'fiat', gbp?.priceToman || 355930, gbp?.priceUsd || 1.33, gbp?.dayChange || 0.0),
-      makeItem('try', 'TRY', 'Turkish Lira', 'لیر ترکیه', 'fiat', trylira?.priceToman || 5530, trylira?.priceUsd || 0.02, trylira?.dayChange || 0.0),
-      makeItem('cny', 'CNY', 'Chinese Yuan', 'یوان چین', 'fiat', cny?.priceToman || 38200, cny?.priceUsd || 0.14, cny?.dayChange || 0.0),
-      makeItem('cad', 'CAD', 'Canadian Dollar', 'دلار کانادا', 'fiat', cad?.priceToman || 198000, cad?.priceUsd || 0.74, cad?.dayChange || 0.0),
-    ];
+      // 4. Fiat Currencies
+      const fiat = [
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, usd?.dayChange || 0.0, usd?.highToman, usd?.lowToman),
+        makeItem('eur', 'EUR', 'Euro', 'یورو اروپا', 'fiat', eur?.priceToman || 302960, eur?.priceUsd || 1.13, eur?.dayChange || 0.0),
+        makeItem('aed', 'AED', 'UAE Dirham', 'درهم امارات', 'fiat', aed?.priceToman || 73440, aed?.priceUsd || 0.27, aed?.dayChange || 0.0),
+        makeItem('gbp', 'GBP', 'British Pound', 'پوند انگلیس', 'fiat', gbp?.priceToman || 355930, gbp?.priceUsd || 1.33, gbp?.dayChange || 0.0),
+        makeItem('try', 'TRY', 'Turkish Lira', 'لیر ترکیه', 'fiat', trylira?.priceToman || 5530, trylira?.priceUsd || 0.02, trylira?.dayChange || 0.0),
+        makeItem('cny', 'CNY', 'Chinese Yuan', 'یوان چین', 'fiat', cny?.priceToman || 38200, cny?.priceUsd || 0.14, cny?.dayChange || 0.0),
+        makeItem('cad', 'CAD', 'Canadian Dollar', 'دلار کانادا', 'fiat', cad?.priceToman || 198000, cad?.priceUsd || 0.74, cad?.dayChange || 0.0),
+      ];
 
-    // 5. Energy & Oil
-    const oil = [
-      makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', brent?.priceToman || Math.round(102.84 * dollarToman), brent?.priceUsd || 102.84, brent?.dayChange || 0.15),
-      makeItem('wti', 'WTI', 'WTI Crude Oil', 'نفت وست تگزاس', 'oil', wti?.priceToman || Math.round(98.40 * dollarToman), wti?.priceUsd || 98.40, wti?.dayChange || -0.20),
-      makeItem('gas', 'GAS', 'Natural Gas', 'گاز طبیعی', 'oil', gas?.priceToman || Math.round(3.12 * dollarToman), gas?.priceUsd || 3.12, gas?.dayChange || 1.40),
-    ];
+      // 5. Energy & Oil
+      const oil = [
+        makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', brent?.priceToman || Math.round(102.84 * dollarToman), brent?.priceUsd || 102.84, brent?.dayChange || 0.15),
+        makeItem('wti', 'WTI', 'WTI Crude Oil', 'نفت وست تگزاس', 'oil', wti?.priceToman || Math.round(98.40 * dollarToman), wti?.priceUsd || 98.40, wti?.dayChange || -0.20),
+        makeItem('gas', 'GAS', 'Natural Gas', 'گاز طبیعی', 'oil', gas?.priceToman || Math.round(3.12 * dollarToman), gas?.priceUsd || 3.12, gas?.dayChange || 1.40),
+      ];
 
-    return {
-      highlights,
-      crypto,
-      gold,
-      fiat,
-      oil,
-      serverTime: new Date().toISOString(),
-    };
+      return {
+        highlights,
+        crypto,
+        gold,
+        fiat,
+        oil,
+        serverTime: new Date().toISOString(),
+      };
+    } catch {
+      // Safe Emergency Fallback
+      return {
+        highlights: [],
+        crypto: [],
+        gold: [],
+        fiat: [],
+        oil: [],
+        serverTime: new Date().toISOString(),
+      };
+    }
   }
 
   /**

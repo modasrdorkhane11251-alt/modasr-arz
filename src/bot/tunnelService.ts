@@ -6,7 +6,10 @@ export class TunnelService {
   private static publicUrl: string = '';
   private static process: ChildProcess | null = null;
   private static isStarting: boolean = false;
-  private static fallbackUrl: string = 'https://ais-pre-zskvaylyhohvurwbbahz3f-866989204783.europe-west2.run.app';
+  // Used only when no DOMAIN is set and the tunnel is not up yet
+  private static get fallbackUrl(): string {
+    return (process.env.APP_URL || '').trim().replace(/\/+$/, '') || 'https://localhost';
+  }
 
   /**
    * Start or retrieve the public tunnel URL

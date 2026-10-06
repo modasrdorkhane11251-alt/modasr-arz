@@ -43,7 +43,25 @@ export interface ActivityLog {
 }
 
 export type ButtonType = 'url' | 'add_to_group' | 'miniapp' | 'channel';
-export type ButtonColorTheme = 'emerald' | 'blue' | 'purple' | 'amber' | 'rose' | 'cyan' | 'orange' | 'dark';
+export type ButtonColorTheme =
+  | 'telegram_blue'
+  | 'telegram_light_blue'
+  | 'telegram_premium'
+  | 'telegram_green'
+  | 'telegram_red'
+  | 'telegram_orange'
+  | 'telegram_cyan'
+  | 'telegram_pink'
+  | 'telegram_dark'
+  | 'telegram_graphite'
+  | 'emerald'
+  | 'blue'
+  | 'purple'
+  | 'amber'
+  | 'rose'
+  | 'cyan'
+  | 'orange'
+  | 'dark';
 
 export interface CustomButtonItem {
   id: string;
@@ -51,6 +69,7 @@ export interface CustomButtonItem {
   url: string;
   type: ButtonType;
   colorTheme: ButtonColorTheme;
+  hexColor?: string; // Custom Hex Color Code (e.g. #2481CC, #31B545, #7257FF)
   iconEmoji: string;
   premiumEmojiId?: string;
   isEnabled: boolean;
@@ -60,6 +79,137 @@ export interface CustomButtonItem {
   showInChannel: boolean; // default true
 }
 
+export interface KeyboardThemeConfig {
+  isEnabled: boolean;
+  activePreset: string;
+  primaryHex: string; // Default & general buttons (e.g. #2481CC)
+  groupBtnHex: string; // Add to Group button (e.g. #31B545)
+  miniAppBtnHex: string; // Mini App button (e.g. #00B4D8)
+  channelBtnHex: string; // Channel button (e.g. #7257FF)
+  alertBtnHex: string; // Report/Alert button (e.g. #E53935)
+  vipBtnHex: string; // VIP/Stars button (e.g. #FF9500)
+  showColorBadgesInPrivate: boolean;
+  showColorBadgesInGroups: boolean;
+  showColorBadgesInChannel: boolean;
+  customHexList: string[]; // Admin's favorite saved custom HEX codes
+}
+
+export const DEFAULT_KEYBOARD_THEME_CONFIG: KeyboardThemeConfig = {
+  isEnabled: true,
+  activePreset: 'telegram_official',
+  primaryHex: '#2481CC',
+  groupBtnHex: '#31B545',
+  miniAppBtnHex: '#00B4D8',
+  channelBtnHex: '#7257FF',
+  alertBtnHex: '#E53935',
+  vipBtnHex: '#FF9500',
+  showColorBadgesInPrivate: true,
+  showColorBadgesInGroups: true,
+  showColorBadgesInChannel: true,
+  customHexList: ['#2481CC', '#31B545', '#7257FF', '#00B4D8', '#FF9500', '#E53935', '#FF2D55', '#2AABEE'],
+};
+
+export const KEYBOARD_THEME_PRESETS: Array<{
+  id: string;
+  name: string;
+  description: string;
+  icon: string;
+  config: Partial<KeyboardThemeConfig>;
+}> = [
+  {
+    id: 'telegram_official',
+    name: '🌟 تم رسمی و استاندارد تلگرام (Telegram Official)',
+    description: 'رنگ‌های رسمی و هماهنگ با اپلیکیشن تلگرام (آبی اصلی، سبز وریفای، بنفش پرمیوم، فیروزه‌ای)',
+    icon: '✈️',
+    config: {
+      primaryHex: '#2481CC',
+      groupBtnHex: '#31B545',
+      miniAppBtnHex: '#00B4D8',
+      channelBtnHex: '#7257FF',
+      alertBtnHex: '#E53935',
+      vipBtnHex: '#FF9500',
+    },
+  },
+  {
+    id: 'crypto_neon',
+    name: '💎 تم کریپتو و نئونی سایبرپانک (Crypto Neon)',
+    description: 'رنگ‌های شاداب نئونی، فیروزه‌ای الماسی، بنفش نئونی و سبز زمردی تریدینگ',
+    icon: '⚡',
+    config: {
+      primaryHex: '#00F0FF',
+      groupBtnHex: '#00FF66',
+      miniAppBtnHex: '#7000FF',
+      channelBtnHex: '#FF0055',
+      alertBtnHex: '#FF3366',
+      vipBtnHex: '#FFE600',
+    },
+  },
+  {
+    id: 'gold_luxury',
+    name: '👑 تم طلایی و سلطنتی صرافی (Gold & Luxury)',
+    description: 'تم اختصاصی طلا، ارز و صرافی با طیف‌های طلایی کهربایی، مسکوکات و سرمه‌ای لوکس',
+    icon: '🪙',
+    config: {
+      primaryHex: '#E5A93C',
+      groupBtnHex: '#10B981',
+      miniAppBtnHex: '#F59E0B',
+      channelBtnHex: '#D97706',
+      alertBtnHex: '#DC2626',
+      vipBtnHex: '#FBBF24',
+    },
+  },
+  {
+    id: 'emerald_matrix',
+    name: '🟢 تم سبز زمردی و معاملاتی (Trading Emerald)',
+    description: 'تم سرسبز و صعودی بازارهای مالی و بورس با سبزهای فسفری و الماسی',
+    icon: '📈',
+    config: {
+      primaryHex: '#10B981',
+      groupBtnHex: '#22C55E',
+      miniAppBtnHex: '#06B6D4',
+      channelBtnHex: '#14B8A6',
+      alertBtnHex: '#EF4444',
+      vipBtnHex: '#EAB308',
+    },
+  },
+  {
+    id: 'telegram_dark_slate',
+    name: '🌙 تم تیره و متالیک گرافیت (Telegram Night Dark)',
+    description: 'طیف رنگ‌های تیره متالیک، شب و تیتانیومی مناسب چت‌های با تم دارک',
+    icon: '🖤',
+    config: {
+      primaryHex: '#384B5E',
+      groupBtnHex: '#2E7D32',
+      miniAppBtnHex: '#1565C0',
+      channelBtnHex: '#6A1B9A',
+      alertBtnHex: '#C62828',
+      vipBtnHex: '#EF6C00',
+    },
+  },
+];
+
+export interface HexColorPreset {
+  name: string;
+  hex: string;
+  badge: string;
+  theme: ButtonColorTheme;
+  isTelegramOfficial?: boolean;
+}
+
+export const HEX_COLOR_PRESETS: HexColorPreset[] = [
+  // ⭐️ رنگ‌های اصلی و رسمی تلگرام (Official Telegram Colors)
+  { name: 'آبی اصلی تلگرام (Telegram Blue)', hex: '#2481CC', badge: '🔵', theme: 'telegram_blue', isTelegramOfficial: true },
+  { name: 'آبی روشن تلگرام (Telegram Light Blue)', hex: '#2AABEE', badge: '🔷', theme: 'telegram_light_blue', isTelegramOfficial: true },
+  { name: 'بنفش تلگرام پرمیوم (Telegram Premium)', hex: '#7257FF', badge: '🟣', theme: 'telegram_premium', isTelegramOfficial: true },
+  { name: 'سبز تایید و تیک وریفای تلگرام (Verified Green)', hex: '#31B545', badge: '🟢', theme: 'telegram_green', isTelegramOfficial: true },
+  { name: 'قرمز اخطار تلگرام (Telegram Red / Alert)', hex: '#E53935', badge: '🔴', theme: 'telegram_red', isTelegramOfficial: true },
+  { name: 'نارنجی ستاره تلگرام (Telegram Stars / Amber)', hex: '#FF9500', badge: '⭐️', theme: 'telegram_orange', isTelegramOfficial: true },
+  { name: 'فیروزه‌ای الماسی تلگرام (Telegram Cyan / Aqua)', hex: '#00B4D8', badge: '💎', theme: 'telegram_cyan', isTelegramOfficial: true },
+  { name: 'صورتی بوست تلگرام (Telegram Boost Pink)', hex: '#FF2D55', badge: '💖', theme: 'telegram_pink', isTelegramOfficial: true },
+  { name: 'تم شب تیره تلگرام (Telegram Night Mode)', hex: '#0E1621', badge: '🌙', theme: 'telegram_dark', isTelegramOfficial: true },
+  { name: 'تم گرافیت تلگرام (Telegram Graphite / Slate)', hex: '#242F3D', badge: '▫️', theme: 'telegram_graphite', isTelegramOfficial: true },
+];
+
 export interface AdConfig {
   buttonText: string;
   buttonUrl: string;
@@ -68,6 +218,10 @@ export interface AdConfig {
   enableCharts: boolean;
   watermarkTag: string;
   customButtons: CustomButtonItem[];
+  miniAppLogoUrl?: string;
+  miniAppBannerUrl?: string;
+  miniAppTitle?: string;
+  miniAppSubtitle?: string;
 }
 
 export const DEFAULT_CUSTOM_BUTTONS: CustomButtonItem[] = [

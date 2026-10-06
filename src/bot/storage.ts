@@ -22,6 +22,7 @@ const AD_CONFIG_FILE = path.join(DATA_DIR, 'ad_config.json');
 const EMOJI_CONFIG_FILE = path.join(DATA_DIR, 'emoji_config.json');
 const CHANNEL_CONFIG_FILE = path.join(DATA_DIR, 'channel_poster_config.json');
 const ADMIN_ALERT_CONFIG_FILE = path.join(DATA_DIR, 'admin_alert_config.json');
+const KEYBOARD_THEME_FILE = path.join(DATA_DIR, 'keyboard_theme.json');
 
 export * from './types';
 import {
@@ -37,6 +38,8 @@ import {
   CustomEmojiItem,
   EmojiConfig,
   DEFAULT_EMOJI_ITEMS,
+  KeyboardThemeConfig,
+  DEFAULT_KEYBOARD_THEME_CONFIG,
 } from './types';
 
 export class BotStorage {
@@ -476,5 +479,129 @@ export class BotStorage {
       console.error('Error saving admin alert config:', e);
     }
     return updated;
+  }
+
+  static getKeyboardTheme(): KeyboardThemeConfig {
+    if (!fs.existsSync(KEYBOARD_THEME_FILE)) return DEFAULT_KEYBOARD_THEME_CONFIG;
+    try {
+      const data = JSON.parse(fs.readFileSync(KEYBOARD_THEME_FILE, 'utf-8'));
+      return { ...DEFAULT_KEYBOARD_THEME_CONFIG, ...data };
+    } catch {
+      return DEFAULT_KEYBOARD_THEME_CONFIG;
+    }
+  }
+
+  static setKeyboardTheme(config: Partial<KeyboardThemeConfig>): KeyboardThemeConfig {
+    const current = this.getKeyboardTheme();
+    const updated = { ...current, ...config };
+    try {
+      fs.writeFileSync(KEYBOARD_THEME_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('Error saving keyboard theme config:', e);
+    }
+    return updated;
+  }
+
+  /**
+   * Export complete application state and configurations for Backup
+   */
+  static exportBackup(): any {
+    return {
+      version: '2.0.0',
+      exportedAt: new Date().toISOString(),
+      timestamp: Date.now(),
+      app: 'MODASR_ARZ_TELEGRAM_BOT',
+      data: {
+        adConfig: this.getAdConfig(),
+        keyboardTheme: this.getKeyboardTheme(),
+        emojiConfig: this.getEmojiConfig(),
+        channelPosterConfig: this.getChannelPosterConfig(),
+        adminAlertConfig: this.getAdminAlertConfig(),
+        botStatus: this.getBotStatus(),
+        users: this.getUsers(),
+        groups: this.getGroups(),
+        blocked: this.getBlocked(),
+        logs: this.getLogs(100),
+      },
+    };
+  }
+
+  /**
+   * Restore application state and configurations from a Backup payload
+   */
+  static restoreBackup(payload: any): { success: boolean; message: string; details?: any } {
+    try {
+      if (!payload || typeof payload !== 'object') {
+        return { success: false, message: 'ساختار فایل بک‌آپ نامعتبر است.' };
+      }
+
+      const backupData = payload.data || payload;
+      let restoredCount = 0;
+
+      if (backupData.adConfig && typeof backupData.adConfig === 'object') {
+        this.setAdConfig(backupData.adConfig);
+        restoredCount++;
+      }
+
+      if (backupData.keyboardTheme && typeof backupData.keyboardTheme === 'object') {
+        this.setKeyboardTheme(backupData.keyboardTheme);
+        restoredCount++;
+      }
+
+      if (backupData.emojiConfig && typeof backupData.emojiConfig === 'object') {
+        this.setEmojiConfig(backupData.emojiConfig);
+        restoredCount++;
+      }
+
+      if (backupData.channelPosterConfig && typeof backupData.channelPosterConfig === 'object') {
+        this.setChannelPosterConfig(backupData.channelPosterConfig);
+        restoredCount++;
+      }
+
+      if (backupData.adminAlertConfig && typeof backupData.adminAlertConfig === 'object') {
+        this.setAdminAlertConfig(backupData.adminAlertConfig);
+        restoredCount++;
+      }
+
+      if (backupData.botStatus !== undefined) {
+        this.setBotStatus(Boolean(backupData.botStatus));
+      }
+
+      if (Array.isArray(backupData.users)) {
+        fs.writeFileSync(USERS_FILE, backupData.users.join('\n'), 'utf-8');
+        restoredCount++;
+      }
+
+      if (Array.isArray(backupData.groups)) {
+        fs.writeFileSync(GROUPS_FILE, backupData.groups.join('\n'), 'utf-8');
+        restoredCount++;
+      }
+
+      if (Array.isArray(backupData.blocked)) {
+        fs.writeFileSync(BLOCKED_FILE, backupData.blocked.join('\n'), 'utf-8');
+        restoredCount++;
+      }
+
+      this.addLog({
+        type: 'system',
+        text: `بازیابی موفقیت‌آمیز اطلاعات و تنظیمات از فایل بک‌آپ (${restoredCount} بخش بازیابی شد)`,
+        status: 'success',
+      });
+
+      return {
+        success: true,
+        message: `✅ اطلاعات و تنظیمات با موفقیت بازیابی شدند (${restoredCount} بخش با موفقیت اعمال شد).`,
+        details: {
+          restoredSections: restoredCount,
+          usersCount: Array.isArray(backupData.users) ? backupData.users.length : undefined,
+          groupsCount: Array.isArray(backupData.groups) ? backupData.groups.length : undefined,
+          buttonsCount: backupData.adConfig?.customButtons?.length,
+          emojisCount: backupData.emojiConfig?.items?.length,
+        },
+      };
+    } catch (err: any) {
+      console.error('Failed to restore backup:', err);
+      return { success: false, message: `خطا در بازیابی اطلاعات: ${err.message}` };
+    }
   }
 }
