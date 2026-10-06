@@ -11,12 +11,17 @@ export class TunnelService {
   /**
    * Start or retrieve the public tunnel URL
    */
+  private static getDomainUrl(): string {
+    const domain = (process.env.DOMAIN || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
+    return domain ? `https://${domain}` : '';
+  }
+
   static getPublicUrl(): string {
-    return this.publicUrl || this.fallbackUrl;
+    return this.getDomainUrl() || this.publicUrl || this.fallbackUrl;
   }
 
   static getMiniAppUrl(): string {
-    const base = this.publicUrl || this.fallbackUrl;
+    const base = this.getPublicUrl();
     return `${base}/mini-modasr-arz`;
   }
 
@@ -28,6 +33,12 @@ export class TunnelService {
    * Initialize Cloudflare Tunnel in background
    */
   static async startTunnel(): Promise<string> {
+    // A real domain is configured (DOMAIN in .env): no Cloudflare tunnel needed
+    const domainUrl = this.getDomainUrl();
+    if (domainUrl) {
+      console.log('[TunnelService] Using configured domain for Mini App:', `${domainUrl}/mini-modasr-arz`);
+      return domainUrl;
+    }
     if (this.publicUrl) return this.publicUrl;
     if (this.isStarting) return this.fallbackUrl;
 
