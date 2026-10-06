@@ -4,67 +4,60 @@
 
 ### Real-Time Gold • Currency • Crypto Intelligence Platform
 
-**Telegram Bot • Mini App • Web Dashboard • VPS Ready**
-
-<p align="center">
-  <a href="https://t.me/Modasr_Arz">Official Channel</a> •
-  <a href="https://t.me/About_modasr">About MODASR</a> •
-  <a href="https://t.me/MODASRp">Founder @MODASRp</a>
-</p>
+**Telegram Bot • Mini App • Admin Dashboard • One-Line Deploy**
 
 ---
 
-🚀 Live Market Intelligence  
-📈 100+ Cryptocurrencies  
-🥇 Gold & Coin Prices  
-💵 Currency Exchange Rates  
-📱 Telegram Mini App  
-🖥 Secure Admin Dashboard  
-🔒 Production Security  
+🚀 Live Market Intelligence
+📈 100+ Cryptocurrencies
+🥇 Gold & Coin Prices
+💵 Currency Exchange Rates
+📱 Telegram Mini App
+🖥 Secure Admin Dashboard
+🔒 Production Security
 ⚡ One-Line Installation
 
 </div>
 
----
-
-# ✨ About MODASR ARZ
-
-MODASR ARZ is a professional Telegram-based market intelligence platform designed to provide real-time information about gold, coins, currencies and cryptocurrency markets.
-
-# 🚀 One-Line Installation
+## 🚀 Deploy in 60 Seconds
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh)
 ```
 
-# ⚡ Core Features
+## ✨ Why MODASR ARZ?
 
-## 🤖 Telegram Bot
-- Real-time market data
-- Gold and coin tracking
-- Cryptocurrency monitoring
-- Market board generation
-- Admin tools
+MODASR ARZ is a complete Telegram market intelligence platform designed for communities, trading channels, digital service providers and market monitoring.
 
-## 📱 Telegram Mini App
-- Live market dashboard
+## ⚡ Features
+
+### 🤖 Telegram Bot
+- Live market lookup
+- Crypto tracking
+- Gold & coin prices
+- Market reports
+- Rich graphical cards
+
+### 📱 Mini App
+- Live dashboard
+- Interactive market view
 - Currency converter
-- Mobile optimized experience
 
-## 🖥 Web Dashboard
-- Secure login
-- Activity monitoring
-- User management
-- Backup management
+### 🖥 Admin Dashboard
+- Authentication
+- Activity logs
+- Broadcast tools
+- Backup & restore
 
-## 🔐 Security
-- CSRF Protection
-- Session Security
-- SSL Automation
-- UFW + Fail2Ban
-- Protected Admin Routes
+### 🔐 Security
+- Session protection
+- CSRF protection
+- Brute-force protection
+- UFW
+- Fail2Ban
+- SSL automation
 
-# 📊 Feature Comparison
+## 📊 Comparison
 
 | Feature | MODASR ARZ | Typical Bot |
 |----------|----------|----------|
@@ -73,18 +66,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/moda
 | Mini App | ✅ | ❌ |
 | Admin Dashboard | ✅ | ❌ |
 | SSL Automation | ✅ | ❌ |
-| Automatic Backups | ✅ | ❌ |
 
-# 🌐 Official Links
+## 💎 MODASR ARZ
 
-Founder: @MODASRp
-
-Channel: @Modasr_Arz
-
-About: https://t.me/About_modasr
-
-# ⭐ Support
-
-Star the repository if you find MODASR ARZ useful.
-
-Built with ❤️ by MODASR
+Professional Telegram Market Intelligence Platform
