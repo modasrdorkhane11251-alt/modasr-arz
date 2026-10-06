@@ -174,8 +174,8 @@ cat <<EOF > data/admin_alert_config.json
 EOF
 
 # ۱۰. نصب پکیج‌های پروژه و بیلد نهایی
-echo -e "${CYAN}📥 در حال نصب پکیج‌های NPM (npm install)...${NC}"
-npm install
+echo -e "${CYAN}📥 در حال نصب پکیج‌های NPM (npm install --legacy-peer-deps)...${NC}"
+npm install --legacy-peer-deps
 
 echo -e "${CYAN}🔨 در حال کامپایل و ساخت فایل‌های نهایی (npm run build)...${NC}"
 npm run build
