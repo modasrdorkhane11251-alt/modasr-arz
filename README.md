@@ -1,72 +1,282 @@
-# 💎 MODASR ARZ
-
 <div align="center">
 
-### Real-Time Gold • Currency • Crypto Intelligence Platform
+# 💎 MODASR ARZ
 
-**Telegram Bot • Mini App • Admin Dashboard • One-Line Deploy**
+### ربات و مینی‌اپ تلگرام برای استعلام لحظه‌ای نرخ طلا، ارز و رمزارز
 
----
-
-🚀 Live Market Intelligence
-📈 100+ Cryptocurrencies
-🥇 Gold & Coin Prices
-💵 Currency Exchange Rates
-📱 Telegram Mini App
-🖥 Secure Admin Dashboard
-🔒 Production Security
-⚡ One-Line Installation
+![Node](https://img.shields.io/badge/Node.js-22-339933?style=for-the-badge&logo=node.js&logoColor=white)
+![Telegram](https://img.shields.io/badge/Telegram-Bot%20%2B%20Mini%20App-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
+![React](https://img.shields.io/badge/Admin%20Panel-React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 
 </div>
 
-## 🚀 Deploy in 60 Seconds
+---
+
+## 📚 فهرست
+
+- [✨ معرفی](#-معرفی)
+- [⚙️ امکانات](#️-امکانات)
+- [🚀 نصب](#-نصب)
+- [🧰 دستور modasr](#-دستور-modasr)
+- [🔄 به‌روزرسانی و حذف](#-بهروزرسانی-و-حذف)
+- [🤖 دستورات ربات](#-دستورات-ربات)
+- [🔐 امنیت](#-امنیت)
+- [⚙️ متغیرهای محیطی](#️-متغیرهای-محیطی-env)
+- [🧑‍💻 توسعه و تست](#-توسعه-و-تست)
+- [🩺 عیب‌یابی](#-عیبیابی)
+
+---
+
+## ✨ معرفی
+
+**MODASR ARZ** یک ربات تلگرام برای استعلام زنده‌ی قیمت دلار، یورو، درهم، طلا و سکه و بیش از ۱۰۰ رمزارز است. ربات کارت‌های گرافیکی قیمت می‌سازد، هر ساعت بولتن بازار را در کانال شما می‌فرستد، یک **مینی‌اپ تلگرام** دارد و با یک **پنل مدیریت وب** (با صفحه‌ی ورود اختصاصی) کنترل می‌شود.
+
+نصب کامل، شامل Node.js و PM2 و Nginx و SSL، فقط با **یک دستور** انجام می‌شود.
+
+---
+
+## ⚙️ امکانات
+
+| | |
+| :--- | :--- |
+| ⚡ **Long Polling / Webhook** | کار می‌کند بدون نیاز به پورت باز |
+| 🎨 **کارت‌های گرافیکی قیمت** | تصویر قیمت، نوسان ۲۴ ساعته، سقف و کف روز |
+| 📢 **ارسال خودکار به کانال** | بولتن ساعتی همراه با تابلوی ۹ ارز برتر |
+| 📱 **مینی‌اپ تلگرام** | تابلوی زنده، نمودار و ماشین‌حساب مبدل ارز |
+| 👑 **ایموجی‌های پرمیوم** | مدیریت و جایگزینی از داخل پنل |
+| 🖥 **پنل مدیریت وب** | صفحه‌ی ورود با رمز، لاگ زنده، پیام همگانی، شبیه‌ساز |
+| 🚨 **هشدار خطا به پیوی ادمین** | قطعی سرویس قیمت یا تلگرام، گزارش کاربران (`/report`) |
+| 💾 **پشتیبان‌گیری** | خودکار قبل از آپدیت و حذف، دستی با `modasr backup`، و خروجی/ورودی JSON داخل پنل |
+
+---
+
+## 🚀 نصب
+
+### پیش‌نیازها
+
+| مورد | توضیح |
+| :--- | :--- |
+| 🖥️ **سرور** | Ubuntu 24.04 LTS (هدف اصلی) یا 22.04 / Debian 11–12، ترجیحاً تمیز، دسترسی `root`، حداقل ۵۱۲MB RAM (اگر RAM کمتر از ۲GB باشد و swap نباشد، نصب‌کننده ۱GB swap می‌سازد) و ۱GB فضای آزاد |
+| 🌐 **دامنه** | برای مینی‌اپ و SSL لازم است؛ رکورد **A** دامنه باید به IP سرور وصل باشد |
+| 🤖 **ربات** | توکن از [@BotFather](https://t.me/BotFather) |
+| 🆔 **آیدی عددی ادمین** | از [@userinfobot](https://t.me/userinfobot) |
+
+> 💡 نصب‌کننده Node.js، PM2، Nginx، Certbot و فونت‌های لازم برای ساخت تصویر را خودش نصب می‌کند.
+
+### نصب با یک دستور
+
+به‌عنوان **root** روی سرور اجرا کنید:
 
 ```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh)
 ```
 
-## ✨ Why MODASR ARZ?
+> اگر فورک کرده‌اید، آدرس بالا و `--repo` را با مخزن خودتان عوض کنید. اگر ترجیح می‌دهید قبل از اجرا فایل را بخوانید:
+> `curl -fsSL URL -o install.sh && less install.sh && bash install.sh`
 
-MODASR ARZ is a complete Telegram market intelligence platform designed for communities, trading channels, digital service providers and market monitoring.
+منوی زیر باز می‌شود؛ گزینه‌ی **۱** را بزنید و به سؤال‌ها جواب بدهید:
 
-## ⚡ Features
+```
+1) نصب MODASR ARZ
+2) به‌روزرسانی
+3) حذف کامل
+4) صدور / تمدید SSL
+5) وضعیت سرویس
+6) مشاهده‌ی لاگ‌ها
+7) تغییر رمز پنل
+8) ری‌استارت ربات
+9) پشتیبان‌گیری
+10) بازیابی از پشتیبان
+11) راهنما و پارامترها
+12) بررسی سلامت (doctor)
+0) خروج
+```
 
-### 🤖 Telegram Bot
-- Live market lookup
-- Crypto tracking
-- Gold & coin prices
-- Market reports
-- Rich graphical cards
+نصب‌کننده سؤال‌های زیر را می‌پرسد و همه را **اعتبارسنجی** می‌کند (توکن مستقیماً از تلگرام چک می‌شود، دی‌ان‌اس دامنه قبل از صدور SSL بررسی می‌شود):
 
-### 📱 Mini App
-- Live dashboard
-- Interactive market view
-- Currency converter
+1. توکن ربات
+2. آیدی عددی ادمین
+3. کانال تلگرام (اختیاری)
+4. دامنه (اختیاری) و پورت
+5. رمز پنل مدیریت (اگر Enter بزنید، رمز تصادفی ساخته می‌شود)
+6. فعال‌سازی فایروال UFW و Fail2Ban (پورت SSH خودکار باز می‌ماند)
 
-### 🖥 Admin Dashboard
-- Authentication
-- Activity logs
-- Broadcast tools
-- Backup & restore
+در پایان خروجی به این شکل نمایش داده می‌شود:
 
-### 🔐 Security
-- Session protection
-- CSRF protection
-- Brute-force protection
-- UFW
-- Fail2Ban
-- SSL automation
+```
+✅ MODASR ARZ Installed Successfully
 
-## 📊 Comparison
+Panel:      https://arz.example.com
+Mini App:   https://arz.example.com/mini-modasr-arz
+Telegram:   Connected (@YourBot) • Long Polling
+Storage:    OK
+SSL:        Active
+Status:     Running
+```
 
-| Feature | MODASR ARZ | Typical Bot |
-|----------|----------|----------|
-| Currency Prices | ✅ | ✅ |
-| Gold Prices | ✅ | ❌ |
-| Mini App | ✅ | ❌ |
-| Admin Dashboard | ✅ | ❌ |
-| SSL Automation | ✅ | ❌ |
+### نصب بدون سؤال (خط فرمان)
 
-## 💎 MODASR ARZ
+```bash
+# توکن و رمز را از متغیر محیطی بدهید تا در `ps` و تاریخچه‌ی shell دیده نشوند
+export MODASR_TOKEN='123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+export MODASR_PASSWORD='MyStrongPass123'
+bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh) install \
+  --admin 111111111 \
+  --domain arz.example.com \
+  --channel @MyChannel \
+  --email you@example.com -y
+```
 
-Professional Telegram Market Intelligence Platform
+| پارامتر | توضیح |
+| :--- | :--- |
+| `--token` | توکن ربات تلگرام (امن‌تر: متغیر `MODASR_TOKEN`) |
+| `--admin` | آیدی عددی ادمین |
+| `--domain` | دامنه (مثال: `arz.example.com`) |
+| `--channel` | کانال ارسال ساعتی (مثال: `@MyChannel`) |
+| `--port` | پورت برنامه (پیش‌فرض `3000`) |
+| `--password` | رمز پنل (حداقل ۸ کاراکتر). امن‌تر: متغیر `MODASR_PASSWORD` |
+| `--email` | ایمیل Let's Encrypt (اختیاری؛ متغیر `MODASR_EMAIL`) |
+| `--name` | یوزرنیم ربات (اختیاری) |
+| `--repo` / `--branch` | مخزن و شاخه‌ی گیت (برای فورک‌ها) |
+| `--no-ssl` | عدم صدور SSL |
+| `--no-firewall` | عدم فعال‌سازی UFW و Fail2Ban |
+| `-y`, `--yes` | بدون پرسیدن تأیید |
+
+---
+
+## 🧰 دستور modasr
+
+بعد از نصب، دستور سراسری `modasr` روی سرور در دسترس است:
+
+| دستور | کار |
+| :--- | :--- |
+| `modasr` | منوی تعاملی |
+| `modasr status` | وضعیت سرویس، ربات، وب‌سرور و SSL |
+| `modasr logs` | لاگ‌های زنده |
+| `modasr restart` | ری‌استارت ربات |
+| `modasr passwd` | تغییر رمز پنل (همه‌ی نشست‌های قبلی بسته می‌شوند) |
+| `modasr ssl` | صدور یا تمدید SSL |
+| `modasr update` | به‌روزرسانی |
+| `modasr backup` | پشتیبان‌گیری از کاربران، تنظیمات و `.env` |
+| `modasr restore [فایل]` | بازیابی از پشتیبان (قبل از بازیابی از وضعیت فعلی هم نسخه می‌گیرد) |
+| `modasr doctor` | بررسی سلامت: Node، PM2 (و اجرای بعد از ریبوت)، Nginx، SSL، UFW، Fail2Ban، دسترسی `.env`، دیسک |
+| `modasr remove` | حذف |
+| `modasr help` | راهنمای کامل |
+
+---
+
+## 🔄 به‌روزرسانی و حذف
+
+```bash
+modasr update      # قبل از آپدیت پشتیبان می‌گیرد؛ اگر نصب/ساخت شکست بخورد خودکار به نسخه‌ی قبل برمی‌گردد
+modasr remove      # از داده‌ها پشتیبان می‌گیرد، سپس ربات و Nginx را حذف می‌کند
+```
+
+اسکریپت‌های `update.sh`، `backup.sh`، `restore.sh` و `uninstall.sh` داخل پوشه‌ی پروژه فقط میان‌بر همین دستورها هستند. «modasr update» مقدارهای امنیتی جدید (مثل `SESSION_SECRET`) را برای نصب‌های قدیمی هم خودکار می‌سازد.
+
+> ⚠️ **تغییر مهم نسبت به نسخه‌های قبل:** مسیرهای قدیمی وب‌هوک `/index.php` و `/webhook` حذف شدند و فقط `/api/telegram/webhook` باقی مانده است. اگر وب‌هوک را دستی روی آن مسیرها ثبت کرده بودید، از پنل (تب وب‌هوک) دوباره «Set Webhook» بزنید. در حالت پیش‌فرض (Long Polling) تغییری لازم نیست.
+
+پشتیبان‌ها در `/root/modasr-backups` ذخیره می‌شوند (۱۰ مورد آخر).
+
+اگر نسخه‌ی قدیمی را از قبل نصب کرده‌اید، کافی است دستور نصب را دوباره بزنید؛ نصب‌کننده کاربران و گروه‌های قبلی را منتقل می‌کند.
+
+---
+
+## 🤖 دستورات ربات
+
+| ورودی | کار |
+| :--- | :--- |
+| `تتر` ، `100 تتر` | قیمت و معادل تومانی و دلاری |
+| `دلار` ، `50 دلار` | نرخ دلار بازار آزاد |
+| `طلا` ، `سکه امامی` ، `مظنه` | نرخ طلا و مسکوکات |
+| `بیت کوین` ، `اتریوم` ، `سولانا` | قیمت رمزارزها |
+| `/بازار` | تصویر تابلوی ۳×۳ بازار و بولتن کلی |
+| `/app` ، `/miniapp` | باز کردن مینی‌اپ |
+| `/report <متن>` | ارسال گزارش یا پیشنهاد به ادمین |
+| `/admin` | پنل مدیریت داخل تلگرام (فقط ادمین) |
+
+---
+
+## 🔐 امنیت
+
+**اسرار و دسترسی**
+- توکن، رمز پنل و `SESSION_SECRET` فقط در `.env` روی سرور هستند (دسترسی `600`) و وارد گیت نمی‌شوند. APIهای عمومی قیمت (TGJU، Nobitex، Binance …) کلید ندارند و عمداً در کد هستند.
+- سرور در حالت production با رمز پیش‌فرض/ضعیف **بالا نمی‌آید**.
+- توکن ربات هیچ‌وقت کامل به مرورگر برگردانده نمی‌شود و دیگر در URL (query string) فرستاده نمی‌شود.
+
+**پنل مدیریت**
+- همه‌ی مسیرهای `/api/bot|channel|telegram|backup` (به‌جز وب‌هوک با Secret Token و مسیرهای عمومی مینی‌اپ) نیاز به ورود دارند؛ اعتبارسنجی **قبل از** خواندن بدنه‌ی درخواست انجام می‌شود.
+- نشست: کوکی `HttpOnly` + `SameSite=Strict` + `Secure` (روی HTTPS)، امضا با `SESSION_SECRET`، انقضای پیش‌فرض ۲۴ ساعت (`SESSION_TTL_HOURS`).
+- ضد brute-force: ۵ رمز اشتباه ⇒ قفل ۱۵ دقیقه‌ای آی‌پی، با دو برابر شدن مدت در قفل‌های بعدی (تا ۲۴ ساعت). ورود با Basic Auth هم همین قفل را دارد.
+- ضد CSRF: درخواست‌های تغییردهنده‌ی مرورگر باید هم‌مبدأ باشند (`Origin` / `Sec-Fetch-Site`).
+- ورود موفق/ناموفق، دانلود و ریستور بک‌آپ در «لاگ فعالیت» ثبت می‌شود.
+
+**بک‌آپ**
+- ساخت، دانلود و بازیابی فقط با ورود. هیچ مسیر فایلی از کاربر گرفته نمی‌شود (بک‌آپ در حافظه از storage ساخته می‌شود)؛ ریستور فقط شناسه‌های عددی معتبر و لینک‌های `http(s)/tg` را می‌پذیرد.
+- `modasr restore` فقط فایل‌های `data/` و `.env` را از آرشیو بیرون می‌آورد و آرشیو با هر مسیر دیگر (مثلاً کد برنامه) یا `..` رد می‌شود.
+
+**سرور**
+- هدرهای امنیتی (CSP، HSTS روی HTTPS، `nosniff`، `Referrer-Policy`، …)، ریت‌لیمیت در Nginx و در خود برنامه، حد بدنه‌ی ۱MB (۲۰MB فقط برای ریستور)، تایم‌اوت درخواست‌ها، خاموشی تمیز و ری‌استارت خودکار با PM2.
+- با دامنه، برنامه فقط روی `127.0.0.1` گوش می‌دهد و Nginx تنها ورودی عمومی است. `X-Forwarded-For` فقط از پراکسی‌های همان سرور پذیرفته می‌شود.
+- UFW (پیش‌فرض: بستن ورودی‌ها؛ SSH با محدودیت اتصال، ۸۰ و ۴۴۳) و Fail2Ban (SSH و ریت‌لیمیت Nginx).
+- Cloudflare Tunnel (فقط وقتی `DOMAIN` خالی است): باینری در `.runtime/` (نه `/tmp`) و با امکان قفل‌کردن sha256؛ برای غیرفعال‌سازی `DISABLE_TUNNEL=true`.
+- برای رمزنگاری ورود به پنل حتماً **دامنه + SSL** داشته باشید؛ بدون دامنه پنل روی HTTP ساده است.
+- اگر توکن ربات لو رفت: در @BotFather دستور `/revoke` بزنید، توکن جدید را در `.env` بگذارید و `modasr restart` کنید.
+
+**محدودیت شناخته‌شده:** برنامه با کاربر `root` اجرا می‌شود (مثل نصب‌کننده‌ی قبلی). جزئیات و راه‌حل پیشنهادی در `SECURITY_REPORT.md`.
+
+---
+
+## ⚙️ متغیرهای محیطی (.env)
+
+| متغیر | الزامی | توضیح |
+| :--- | :---: | :--- |
+| `BOT_TOKEN` | ✅ | توکن @BotFather |
+| `ADMIN_ID` | ✅ | آیدی عددی ادمین تلگرام |
+| `ADMIN_PASSWORD` | ✅ | رمز پنل، حداقل ۸ کاراکتر (`modasr passwd`) |
+| `SESSION_SECRET` | توصیه‌شده | کلید امضای نشست (≥۳۲ کاراکتر؛ نصب‌کننده می‌سازد) |
+| `SESSION_TTL_HOURS` | | عمر نشست، ۱ تا ۷۲۰ (پیش‌فرض ۲۴) |
+| `BOT_USERNAME` | | یوزرنیم ربات (خودکار) |
+| `PORT` | | پیش‌فرض `3000` |
+| `DOMAIN` | | دامنه بدون `https://`؛ با آن برنامه فقط روی loopback گوش می‌دهد |
+| `HOST` | | جایگزین آدرس گوش‌دادن |
+| `APP_URL` | | آدرس عمومی برای وب‌هوک پیش‌فرض |
+| `DISABLE_TUNNEL` | | `true` ⇒ هرگز cloudflared دانلود/اجرا نشود |
+| `CLOUDFLARED_SHA256` | | sha256 باینری cloudflared برای قفل یکپارچگی |
+
+نمونه‌ی کامل: [`.env.example`](.env.example)
+
+---
+
+## 🧑‍💻 توسعه و تست
+
+```bash
+npm install
+npm run dev      # سرور + Vite
+npm test         # تست‌های امنیتی (node:test + tsx)
+npm run lint     # tsc --noEmit
+npm run build && npm start
+```
+
+---
+
+## 🩺 عیب‌یابی
+
+| مشکل | راه‌حل |
+| :--- | :--- |
+| ربات جواب نمی‌دهد | `modasr status` و `modasr logs` را بزنید. اگر توکن نامعتبر است، توکن را در `/opt/modasr-arz/.env` اصلاح و `modasr restart` کنید |
+| SSL صادر نشد | رکورد A دامنه باید به IP سرور اشاره کند (چند دقیقه صبر کنید) و بعد `modasr ssl` |
+| رمز پنل را فراموش کردم | `modasr passwd` |
+| `modasr doctor` مشکل نشان می‌دهد | پیام هر مورد راه‌حل را می‌نویسد؛ بعد از رفع دوباره اجرا کنید |
+| ساخت (build) با کمبود حافظه شکست می‌خورد | سرور swap ندارد؛ نصب‌کننده خودکار می‌سازد، یا دستی: `fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile` |
+| تصویر کارت‌ها ساخته نمی‌شود | `apt install -y fontconfig fonts-dejavu-core` و `modasr restart` |
+| کانال پست نمی‌گیرد | ربات باید در کانال **ادمین** باشد و آیدی کانال با `@` وارد شده باشد |
+
+---
+
+<div align="center">
+
+**MØD†SR.ƪARZ** • ساخته‌شده با ❤️
+
+</div>
