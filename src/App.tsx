@@ -7,18 +7,10 @@ import { StatsBroadcastPanel } from './components/StatsBroadcastPanel';
 import { ActivityLogsPanel } from './components/ActivityLogsPanel';
 import { MiniAppView } from './components/MiniAppView';
 import { MiniAppPreviewPanel } from './components/MiniAppPreviewPanel';
+import { detectMiniApp } from './lib/miniApp';
 
 export default function App() {
-  const isDirectMiniApp = typeof window !== 'undefined' && (
-    window.location.pathname.includes('mini-modasr-arz') ||
-    window.location.pathname.startsWith('/miniapp') ||
-    window.location.pathname.startsWith('/app') ||
-    window.location.search.includes('view=miniapp') ||
-    window.location.search.includes('app=mini-modasr-arz') ||
-    window.location.search.includes('secret=mini-modasr-arz') ||
-    window.location.search.includes('tgWebApp') ||
-    Boolean((window as any).Telegram?.WebApp?.initData)
-  );
+  const isDirectMiniApp = detectMiniApp();
 
   const [activeTab, setActiveTab] = useState<string>(isDirectMiniApp ? 'miniapp-fullscreen' : 'webhook');
   const [statusData, setStatusData] = useState<any>(null);
@@ -241,8 +233,8 @@ export default function App() {
       {/* Footer */}
       <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>ربات هوشمند استعلام قیمت طلا و ارز دیجیتال (Modasr Arzbot)</span>
-          <span className="font-mono text-slate-600">MODASR ARZ</span>
+          <span>سامانه و ربات هوشمند استعلام نرخ طلا، ارز و کریپتو</span>
+          <span className="font-mono text-slate-600">{statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : 'Modasr Arzbot'}</span>
         </div>
       </footer>
     </div>
