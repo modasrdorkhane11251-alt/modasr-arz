@@ -401,7 +401,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
 
             <div className="flex items-center gap-2 pt-1 text-xs text-slate-400">
               <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>تنها توکن فعال و رسمی پروژه: <code className="text-cyan-300 font-mono">8644317369:AAFUBfDRJiQH1VkAdXKoCVOSaxvlm9FoEJo</code></span>
+              <span>توکن ربات از فایل <code className="text-cyan-300 font-mono">.env</code> روی سرور خوانده می‌شود</span>
             </div>
           </div>
 
@@ -426,11 +426,11 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">شناسه عددی (Bot ID):</span>
-                <span className="font-mono text-slate-200">{statusData?.botInfo?.result?.id || '8644317369'}</span>
+                <span className="font-mono text-slate-200">{statusData?.botInfo?.result?.id || '—'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">شناسه مالک (Admin ID):</span>
-                <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || '1355650097'}</span>
+                <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || '—'}</span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-slate-400">وضعیت اتصال:</span>

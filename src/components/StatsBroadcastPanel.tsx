@@ -1860,13 +1860,13 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
           <div className="space-y-1.5 p-3.5 rounded-xl bg-slate-950/60 border border-slate-800">
             <label className="text-xs font-bold text-slate-300 flex items-center justify-between">
               <span>شناسه عددی ادمین (Admin Chat ID):</span>
-              <span className="text-[10px] text-cyan-400 font-mono">پیش‌فرض: 1355650097</span>
+              <span className="text-[10px] text-cyan-400 font-mono">پیش‌فرض: ADMIN_ID فایل .env</span>
             </label>
             <input
               type="text"
               value={alertConfig.adminId}
               onChange={(e) => setAlertConfig({ ...alertConfig, adminId: e.target.value })}
-              placeholder="مثال: 1355650097"
+              placeholder="مثال: 123456789"
               dir="ltr"
               className="w-full px-3 py-2 rounded-xl bg-slate-900 border border-slate-700 text-xs font-mono text-slate-100 focus:border-rose-500 focus:outline-none"
             />
