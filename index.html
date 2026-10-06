@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>mini MODASR arz - ربات تلگرام و مینی اپ قیمت لحظه‌ای</title>
+    <meta name="description" content="سرور و مینی اپ اختصاصی تلگرام mini MODASR arz استعلام زنده قیمت ارز، طلا و کریپتو با شاخص لحظه‌ای" />
+    <meta name="robots" content="noindex, nofollow, noarchive" />
+    <meta name="googlebot" content="noindex, nofollow" />
+    <meta property="og:title" content="mini MODASR arz - ربات تلگرام و مینی اپ قیمت لحظه‌ای" />
+    <meta property="og:description" content="سرور و مینی اپ اختصاصی تلگرام mini MODASR arz استعلام زنده قیمت ارز، طلا و کریپتو با شاخص لحظه‌ای" />
+    <meta property="og:type" content="website" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <script>
+      (function() {
+        // 1. Intercept console.error to prevent Vite HMR websocket noise from appearing in AI Studio logs
+        var origConsoleError = console.error;
+        console.error = function() {
+          var firstArg = arguments[0] ? String(arguments[0]) : '';
+          if (
+            firstArg.indexOf('[vite]') !== -1 ||
+            firstArg.indexOf('WebSocket') !== -1 ||
+            firstArg.indexOf('websocket') !== -1
+          ) {
+            return;
+          }
+          return origConsoleError.apply(console, arguments);
+        };
+
+        // 2. Intercept console.warn for Vite websocket
+        var origConsoleWarn = console.warn;
+        console.warn = function() {
+          var firstArg = arguments[0] ? String(arguments[0]) : '';
+          if (
+            firstArg.indexOf('[vite]') !== -1 ||
+            firstArg.indexOf('WebSocket') !== -1 ||
+            firstArg.indexOf('websocket') !== -1
+          ) {
+            return;
+          }
+          return origConsoleWarn.apply(console, arguments);
+        };
+
+        // 3. Intercept console.debug for [vite] connecting...
+        var origConsoleDebug = console.debug;
+        console.debug = function() {
+          var firstArg = arguments[0] ? String(arguments[0]) : '';
+          if (firstArg.indexOf('[vite]') !== -1) {
+            return;
+          }
+          return origConsoleDebug.apply(console, arguments);
+        };
+
+        // 4. Suppress unhandledrejection & error events for websocket
+        window.addEventListener('unhandledrejection', function(event) {
+          var reason = event.reason;
+          var msg = (reason && (reason.message || String(reason))) || '';
+          if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('websocket') !== -1 || msg.indexOf('[vite]') !== -1) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+
+        window.addEventListener('error', function(event) {
+          var msg = (event && (event.message || '')) || '';
+          if (msg.indexOf('WebSocket') !== -1 || msg.indexOf('websocket') !== -1 || msg.indexOf('[vite]') !== -1) {
+            event.preventDefault();
+            event.stopImmediatePropagation();
+          }
+        }, true);
+      })();
+    </script>
+    <script src="https://telegram.org/js/telegram-web-app.js"></script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 font-['Vazirmatn',sans-serif] antialiased min-h-screen">
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
+</html>

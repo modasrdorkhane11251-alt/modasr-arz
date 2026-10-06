@@ -9,7 +9,7 @@
 تنها با اجرای **یک خط دستور** در ترمینال سرور مجازی (اوبونتو / دبیان)، همه چیز شامل Node.js، پکیج‌ها، بیلد، تنظیمات و اجرای دائم به صورت تعاملی نصب می‌شود:
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/modasr-arz.git && cd modasr-arz && bash install.sh
+git clone https://github.com/modasrdorkhane11251-alt/modasr-arz.git && cd modasr-arz && bash install.sh
 ```
 
 در طول نصب، اسکریپت موارد زیر را از شما سوال می‌کند (با مقادیر پیش‌فرض آماده):
