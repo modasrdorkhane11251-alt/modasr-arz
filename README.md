@@ -6,7 +6,7 @@
 
 ![Node](https://img.shields.io/badge/Node.js-22-339933?style=for-the-badge&logo=node.js&logoColor=white)
 ![Telegram](https://img.shields.io/badge/Telegram-Bot%20%2B%20Mini%20App-26A5E4?style=for-the-badge&logo=telegram&logoColor=white)
-![Ubuntu](https://img.shields.io/badge/Ubuntu-22.04%20%7C%2024.04-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/Ubuntu-24.04%20LTS-E95420?style=for-the-badge&logo=ubuntu&logoColor=white)
 ![React](https://img.shields.io/badge/Admin%20Panel-React-61DAFB?style=for-the-badge&logo=react&logoColor=black)
 
 </div>
@@ -22,6 +22,8 @@
 - [🔄 به‌روزرسانی و حذف](#-بهروزرسانی-و-حذف)
 - [🤖 دستورات ربات](#-دستورات-ربات)
 - [🔐 امنیت](#-امنیت)
+- [⚙️ متغیرهای محیطی](#️-متغیرهای-محیطی-env)
+- [🧑‍💻 توسعه و تست](#-توسعه-و-تست)
 - [🩺 عیب‌یابی](#-عیبیابی)
 
 ---
@@ -55,7 +57,7 @@
 
 | مورد | توضیح |
 | :--- | :--- |
-| 🖥️ **سرور** | Ubuntu 22.04 / 24.04 یا Debian 11 / 12 (ترجیحاً تمیز) و دسترسی `root` |
+| 🖥️ **سرور** | Ubuntu 24.04 LTS (هدف اصلی) یا 22.04 / Debian 11–12، ترجیحاً تمیز، دسترسی `root`، حداقل ۵۱۲MB RAM (اگر RAM کمتر از ۲GB باشد و swap نباشد، نصب‌کننده ۱GB swap می‌سازد) و ۱GB فضای آزاد |
 | 🌐 **دامنه** | برای مینی‌اپ و SSL لازم است؛ رکورد **A** دامنه باید به IP سرور وصل باشد |
 | 🤖 **ربات** | توکن از [@BotFather](https://t.me/BotFather) |
 | 🆔 **آیدی عددی ادمین** | از [@userinfobot](https://t.me/userinfobot) |
@@ -67,14 +69,11 @@
 به‌عنوان **root** روی سرور اجرا کنید:
 
 ```bash
-curl -o install.sh -L https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh && bash install.sh
-```
-
-یا معادل آن (بدون ذخیره‌ی فایل):
-
-```bash
 bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh)
 ```
+
+> اگر فورک کرده‌اید، آدرس بالا و `--repo` را با مخزن خودتان عوض کنید. اگر ترجیح می‌دهید قبل از اجرا فایل را بخوانید:
+> `curl -fsSL URL -o install.sh && less install.sh && bash install.sh`
 
 منوی زیر باز می‌شود؛ گزینه‌ی **۱** را بزنید و به سؤال‌ها جواب بدهید:
 
@@ -90,6 +89,7 @@ bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/moda
 9) پشتیبان‌گیری
 10) بازیابی از پشتیبان
 11) راهنما و پارامترها
+12) بررسی سلامت (doctor)
 0) خروج
 ```
 
@@ -118,22 +118,25 @@ Status:     Running
 ### نصب بدون سؤال (خط فرمان)
 
 ```bash
-bash install.sh install \
-  --token 123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx \
+# توکن و رمز را از متغیر محیطی بدهید تا در `ps` و تاریخچه‌ی shell دیده نشوند
+export MODASR_TOKEN='123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'
+export MODASR_PASSWORD='MyStrongPass123'
+bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh) install \
   --admin 111111111 \
   --domain arz.example.com \
   --channel @MyChannel \
-  --password 'MyStrongPass123' -y
+  --email you@example.com -y
 ```
 
 | پارامتر | توضیح |
 | :--- | :--- |
-| `--token` | توکن ربات تلگرام |
+| `--token` | توکن ربات تلگرام (امن‌تر: متغیر `MODASR_TOKEN`) |
 | `--admin` | آیدی عددی ادمین |
 | `--domain` | دامنه (مثال: `arz.example.com`) |
 | `--channel` | کانال ارسال ساعتی (مثال: `@MyChannel`) |
 | `--port` | پورت برنامه (پیش‌فرض `3000`) |
-| `--password` | رمز پنل (حداقل ۸ کاراکتر) |
+| `--password` | رمز پنل (حداقل ۸ کاراکتر). امن‌تر: متغیر `MODASR_PASSWORD` |
+| `--email` | ایمیل Let's Encrypt (اختیاری؛ متغیر `MODASR_EMAIL`) |
 | `--name` | یوزرنیم ربات (اختیاری) |
 | `--repo` / `--branch` | مخزن و شاخه‌ی گیت (برای فورک‌ها) |
 | `--no-ssl` | عدم صدور SSL |
@@ -157,6 +160,7 @@ bash install.sh install \
 | `modasr update` | به‌روزرسانی |
 | `modasr backup` | پشتیبان‌گیری از کاربران، تنظیمات و `.env` |
 | `modasr restore [فایل]` | بازیابی از پشتیبان (قبل از بازیابی از وضعیت فعلی هم نسخه می‌گیرد) |
+| `modasr doctor` | بررسی سلامت: Node، PM2 (و اجرای بعد از ریبوت)، Nginx، SSL، UFW، Fail2Ban، دسترسی `.env`، دیسک |
 | `modasr remove` | حذف |
 | `modasr help` | راهنمای کامل |
 
@@ -165,9 +169,13 @@ bash install.sh install \
 ## 🔄 به‌روزرسانی و حذف
 
 ```bash
-modasr update      # قبل از آپدیت خودکار پشتیبان می‌گیرد؛ .env و data دست‌نخورده می‌مانند
+modasr update      # قبل از آپدیت پشتیبان می‌گیرد؛ اگر نصب/ساخت شکست بخورد خودکار به نسخه‌ی قبل برمی‌گردد
 modasr remove      # از داده‌ها پشتیبان می‌گیرد، سپس ربات و Nginx را حذف می‌کند
 ```
+
+اسکریپت‌های `update.sh`، `backup.sh`، `restore.sh` و `uninstall.sh` داخل پوشه‌ی پروژه فقط میان‌بر همین دستورها هستند. «modasr update» مقدارهای امنیتی جدید (مثل `SESSION_SECRET`) را برای نصب‌های قدیمی هم خودکار می‌سازد.
+
+> ⚠️ **تغییر مهم نسبت به نسخه‌های قبل:** مسیرهای قدیمی وب‌هوک `/index.php` و `/webhook` حذف شدند و فقط `/api/telegram/webhook` باقی مانده است. اگر وب‌هوک را دستی روی آن مسیرها ثبت کرده بودید، از پنل (تب وب‌هوک) دوباره «Set Webhook» بزنید. در حالت پیش‌فرض (Long Polling) تغییری لازم نیست.
 
 پشتیبان‌ها در `/root/modasr-backups` ذخیره می‌شوند (۱۰ مورد آخر).
 
@@ -192,15 +200,64 @@ modasr remove      # از داده‌ها پشتیبان می‌گیرد، سپ�
 
 ## 🔐 امنیت
 
-- توکن و رمزها فقط در فایل `.env` روی سرور هستند (دسترسی `600`) و هرگز وارد گیت نمی‌شوند.
-- **پنل وب پشت صفحه‌ی ورود است.** نشست در کوکی `HttpOnly` ذخیره می‌شود؛ بعد از ۵ رمز اشتباه، آی‌پی ۱۵ دقیقه مسدود می‌شود.
-- وب‌هوک تلگرام با Secret Token تأیید می‌شود تا درخواست جعلی پذیرفته نشود.
-- مینی‌اپ برای کاربران عادی بدون ورود کار می‌کند و به APIهای مدیریتی (از جمله بک‌آپ و ریستور) دسترسی ندارد.
-- Nginx ریت‌لیمیت دارد (۱۰ درخواست در ثانیه، و ۵ تلاش ورود در دقیقه) و هدرهای امنیتی ارسال می‌کند.
-- UFW فقط پورت‌های SSH و ۸۰ و ۴۴۳ را باز می‌گذارد و Fail2Ban جلوی حمله‌ی رمزحدس‌زنی به SSH را می‌گیرد.
-- آدرس `GET /health` وضعیت سرویس را بدون هیچ اطلاعات حساسی برمی‌گرداند (برای مانیتورینگ).
-- برای رمزنگاری ورود به پنل حتماً **دامنه + SSL** داشته باشید.
-- اگر توکن ربات جایی لو رفت: در @BotFather دستور `/revoke` بزنید، توکن جدید را در `.env` بگذارید و `modasr restart` کنید.
+**اسرار و دسترسی**
+- توکن، رمز پنل و `SESSION_SECRET` فقط در `.env` روی سرور هستند (دسترسی `600`) و وارد گیت نمی‌شوند. APIهای عمومی قیمت (TGJU، Nobitex، Binance …) کلید ندارند و عمداً در کد هستند.
+- سرور در حالت production با رمز پیش‌فرض/ضعیف **بالا نمی‌آید**.
+- توکن ربات هیچ‌وقت کامل به مرورگر برگردانده نمی‌شود و دیگر در URL (query string) فرستاده نمی‌شود.
+
+**پنل مدیریت**
+- همه‌ی مسیرهای `/api/bot|channel|telegram|backup` (به‌جز وب‌هوک با Secret Token و مسیرهای عمومی مینی‌اپ) نیاز به ورود دارند؛ اعتبارسنجی **قبل از** خواندن بدنه‌ی درخواست انجام می‌شود.
+- نشست: کوکی `HttpOnly` + `SameSite=Strict` + `Secure` (روی HTTPS)، امضا با `SESSION_SECRET`، انقضای پیش‌فرض ۲۴ ساعت (`SESSION_TTL_HOURS`).
+- ضد brute-force: ۵ رمز اشتباه ⇒ قفل ۱۵ دقیقه‌ای آی‌پی، با دو برابر شدن مدت در قفل‌های بعدی (تا ۲۴ ساعت). ورود با Basic Auth هم همین قفل را دارد.
+- ضد CSRF: درخواست‌های تغییردهنده‌ی مرورگر باید هم‌مبدأ باشند (`Origin` / `Sec-Fetch-Site`).
+- ورود موفق/ناموفق، دانلود و ریستور بک‌آپ در «لاگ فعالیت» ثبت می‌شود.
+
+**بک‌آپ**
+- ساخت، دانلود و بازیابی فقط با ورود. هیچ مسیر فایلی از کاربر گرفته نمی‌شود (بک‌آپ در حافظه از storage ساخته می‌شود)؛ ریستور فقط شناسه‌های عددی معتبر و لینک‌های `http(s)/tg` را می‌پذیرد.
+- `modasr restore` فقط فایل‌های `data/` و `.env` را از آرشیو بیرون می‌آورد و آرشیو با هر مسیر دیگر (مثلاً کد برنامه) یا `..` رد می‌شود.
+
+**سرور**
+- هدرهای امنیتی (CSP، HSTS روی HTTPS، `nosniff`، `Referrer-Policy`، …)، ریت‌لیمیت در Nginx و در خود برنامه، حد بدنه‌ی ۱MB (۲۰MB فقط برای ریستور)، تایم‌اوت درخواست‌ها، خاموشی تمیز و ری‌استارت خودکار با PM2.
+- با دامنه، برنامه فقط روی `127.0.0.1` گوش می‌دهد و Nginx تنها ورودی عمومی است. `X-Forwarded-For` فقط از پراکسی‌های همان سرور پذیرفته می‌شود.
+- UFW (پیش‌فرض: بستن ورودی‌ها؛ SSH با محدودیت اتصال، ۸۰ و ۴۴۳) و Fail2Ban (SSH و ریت‌لیمیت Nginx).
+- Cloudflare Tunnel (فقط وقتی `DOMAIN` خالی است): باینری در `.runtime/` (نه `/tmp`) و با امکان قفل‌کردن sha256؛ برای غیرفعال‌سازی `DISABLE_TUNNEL=true`.
+- برای رمزنگاری ورود به پنل حتماً **دامنه + SSL** داشته باشید؛ بدون دامنه پنل روی HTTP ساده است.
+- اگر توکن ربات لو رفت: در @BotFather دستور `/revoke` بزنید، توکن جدید را در `.env` بگذارید و `modasr restart` کنید.
+
+**محدودیت شناخته‌شده:** برنامه با کاربر `root` اجرا می‌شود (مثل نصب‌کننده‌ی قبلی). جزئیات و راه‌حل پیشنهادی در `SECURITY_REPORT.md`.
+
+---
+
+## ⚙️ متغیرهای محیطی (.env)
+
+| متغیر | الزامی | توضیح |
+| :--- | :---: | :--- |
+| `BOT_TOKEN` | ✅ | توکن @BotFather |
+| `ADMIN_ID` | ✅ | آیدی عددی ادمین تلگرام |
+| `ADMIN_PASSWORD` | ✅ | رمز پنل، حداقل ۸ کاراکتر (`modasr passwd`) |
+| `SESSION_SECRET` | توصیه‌شده | کلید امضای نشست (≥۳۲ کاراکتر؛ نصب‌کننده می‌سازد) |
+| `SESSION_TTL_HOURS` | | عمر نشست، ۱ تا ۷۲۰ (پیش‌فرض ۲۴) |
+| `BOT_USERNAME` | | یوزرنیم ربات (خودکار) |
+| `PORT` | | پیش‌فرض `3000` |
+| `DOMAIN` | | دامنه بدون `https://`؛ با آن برنامه فقط روی loopback گوش می‌دهد |
+| `HOST` | | جایگزین آدرس گوش‌دادن |
+| `APP_URL` | | آدرس عمومی برای وب‌هوک پیش‌فرض |
+| `DISABLE_TUNNEL` | | `true` ⇒ هرگز cloudflared دانلود/اجرا نشود |
+| `CLOUDFLARED_SHA256` | | sha256 باینری cloudflared برای قفل یکپارچگی |
+
+نمونه‌ی کامل: [`.env.example`](.env.example)
+
+---
+
+## 🧑‍💻 توسعه و تست
+
+```bash
+npm install
+npm run dev      # سرور + Vite
+npm test         # تست‌های امنیتی (node:test + tsx)
+npm run lint     # tsc --noEmit
+npm run build && npm start
+```
 
 ---
 
@@ -211,6 +268,8 @@ modasr remove      # از داده‌ها پشتیبان می‌گیرد، سپ�
 | ربات جواب نمی‌دهد | `modasr status` و `modasr logs` را بزنید. اگر توکن نامعتبر است، توکن را در `/opt/modasr-arz/.env` اصلاح و `modasr restart` کنید |
 | SSL صادر نشد | رکورد A دامنه باید به IP سرور اشاره کند (چند دقیقه صبر کنید) و بعد `modasr ssl` |
 | رمز پنل را فراموش کردم | `modasr passwd` |
+| `modasr doctor` مشکل نشان می‌دهد | پیام هر مورد راه‌حل را می‌نویسد؛ بعد از رفع دوباره اجرا کنید |
+| ساخت (build) با کمبود حافظه شکست می‌خورد | سرور swap ندارد؛ نصب‌کننده خودکار می‌سازد، یا دستی: `fallocate -l 1G /swapfile && chmod 600 /swapfile && mkswap /swapfile && swapon /swapfile` |
 | تصویر کارت‌ها ساخته نمی‌شود | `apt install -y fontconfig fonts-dejavu-core` و `modasr restart` |
 | کانال پست نمی‌گیرد | ربات باید در کانال **ادمین** باشد و آیدی کانال با `@` وارد شده باشد |
 

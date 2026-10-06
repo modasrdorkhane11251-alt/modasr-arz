@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 # ==============================================================================
 #  💎 MODASR ARZ — نصب‌کننده و مدیریت‌گر (Installer & Manager)
-#  Ubuntu 22.04 / 24.04  •  Debian 11 / 12
+#  هدف: Ubuntu 24.04 LTS  •  همچنین Ubuntu 22.04  •  Debian 11 / 12
 #
-#  نصب با یک دستور:
-#    curl -o install.sh -L https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh && bash install.sh
+#  نصب با یک دستور (به‌عنوان root):
+#    bash <(curl -fsSL https://raw.githubusercontent.com/modasrdorkhane11251-alt/modasr-arz/main/install.sh)
+#
+#  نصب غیرتعاملی (رمز/توکن را از متغیر محیطی بدهید تا در لیست پردازه‌ها دیده نشود):
+#    MODASR_TOKEN=123:ABC MODASR_PASSWORD='...' bash <(curl -fsSL URL) install --admin 111 --domain arz.example.com -y
 #
 #  بعد از نصب، دستور سراسری  modasr  در دسترس است.
 # ==============================================================================
 
-INSTALLER_VERSION="2.0.0"
+INSTALLER_VERSION="2.1.0"
 DEFAULT_REPO="https://github.com/modasrdorkhane11251-alt/modasr-arz.git"
 
 APP_NAME="modasr-bot"
@@ -18,6 +21,7 @@ LOG_FILE="/var/log/modasr-install.log"
 CLI_PATH="/usr/local/bin/modasr"
 BACKUP_DIR="/root/modasr-backups"
 NGINX_SITE="/etc/nginx/sites-available/modasr"
+LOGROTATE_FILE="/etc/logrotate.d/modasr"
 
 # تنظیمات ذخیره‌شده‌ی نصب قبلی (INSTALL_DIR / REPO_URL / BRANCH)
 [ -f "$CONF_FILE" ] && . "$CONF_FILE"
@@ -26,7 +30,7 @@ REPO_URL="${MODASR_REPO:-${REPO_URL:-$DEFAULT_REPO}}"
 BRANCH="${MODASR_BRANCH:-${BRANCH:-}}"
 
 # پارامترهای خط فرمان
-A_TOKEN=""; A_ADMIN=""; A_NAME=""; A_DOMAIN=""; A_CHANNEL=""; A_PASSWORD=""; A_PORT=""
+A_TOKEN="${MODASR_TOKEN:-}"; A_ADMIN=""; A_NAME=""; A_DOMAIN=""; A_CHANNEL=""; A_PASSWORD="${MODASR_PASSWORD:-}"; A_PORT=""; A_EMAIL="${MODASR_EMAIL:-}"
 ASSUME_YES=0; NO_SSL=0; NO_FIREWALL=0; PURGE=0; FORCE=0; RESTORE_FILE=""
 
 # رنگ‌ها
@@ -105,7 +109,8 @@ prompt() { # prompt VAR "برچسب" "پیش‌فرض" validator "پیام خط�
   done
 }
 
-gen_password() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 18; }
+gen_password() { head -c 96 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20; }
+gen_secret()   { openssl rand -hex 32 2>/dev/null || head -c 64 /dev/urandom | od -An -tx1 | tr -d ' \n' | head -c 64; }
 
 # ------------------------------------------------------------------------------
 # ابزارهای فایل .env
@@ -126,10 +131,18 @@ set_env() { # set_env KEY VALUE
   ' "$file" > "$file.tmp" && mv "$file.tmp" "$file" && chmod 600 "$file"
 }
 
+# مقدارهای امنیتی جدید را در نصب‌های قدیمی هم به‌صورت خودکار می‌سازد (بدون دست زدن به مقدارهای موجود)
+ensure_env_defaults() {
+  [ -n "$(get_env SESSION_SECRET)" ]     || set_env SESSION_SECRET "$(gen_secret)"
+  [ -n "$(get_env SESSION_TTL_HOURS)" ]  || set_env SESSION_TTL_HOURS "24"
+  [ -n "$(get_env DISABLE_TUNNEL)" ]     || set_env DISABLE_TUNNEL "$([ -n "$(get_env DOMAIN)" ] && echo true || echo false)"
+  chmod 600 "$INSTALL_DIR/.env" 2>/dev/null || true
+}
+
 # ------------------------------------------------------------------------------
 # بررسی‌های اولیه سیستم
 # ------------------------------------------------------------------------------
-need_root() { [ "$(id -u)" -eq 0 ] || die "این دستور باید با کاربر root اجرا شود (sudo -i)."; }
+need_root() { [ "$(id -u)" -eq 0 ] || die "این دستور باید با کاربر root اجرا شود (ابتدا «sudo -i» بزنید)."; }
 
 check_os() {
   command -v apt-get >/dev/null 2>&1 || die "فقط سیستم‌های Ubuntu/Debian پشتیبانی می‌شوند."
@@ -172,12 +185,18 @@ tg_getme() { # tg_getme TOKEN  -> 0 معتبر | 1 نامعتبر | 2 عدم ا�
 # ------------------------------------------------------------------------------
 APT="env DEBIAN_FRONTEND=noninteractive apt-get -o DPkg::Lock::Timeout=180 -y"
 
-pkg_base()  { $APT update && $APT install curl git ca-certificates build-essential openssl fontconfig fonts-dejavu-core; }
+pkg_base()  { $APT update && $APT install curl git ca-certificates build-essential openssl fontconfig fonts-dejavu-core logrotate; }
 pkg_nginx() { $APT install nginx certbot python3-certbot-nginx; }
 
-node_ok() { command -v node >/dev/null 2>&1 && [ "$(node -v | cut -d. -f1 | tr -d v)" -ge 20 ]; }
+# Vite 8 به Node ‎>=20.19 یا ‎>=22.12 نیاز دارد
+node_ok() {
+  command -v node >/dev/null 2>&1 || return 1
+  local v maj min; v="$(node -v | tr -d v)"; maj="${v%%.*}"; min="${v#*.}"; min="${min%%.*}"
+  { [ "$maj" -eq 20 ] && [ "$min" -ge 19 ]; } || { [ "$maj" -eq 22 ] && [ "$min" -ge 12 ]; } || [ "$maj" -gt 22 ]
+}
 install_node() {
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash - && $APT install nodejs
+  curl -fsSL --retry 3 --retry-delay 2 https://deb.nodesource.com/setup_22.x -o /tmp/nodesource_setup.sh \
+    && bash /tmp/nodesource_setup.sh && rm -f /tmp/nodesource_setup.sh && $APT install nodejs
 }
 install_pm2() { npm install -g pm2; }
 
@@ -193,13 +212,55 @@ fetch_code() {
   fi
 }
 
-npm_install() { (cd "$INSTALL_DIR" && npm install --no-audit --no-fund); }
+npm_install() {
+  # با وجود package-lock.json نسخه‌ها دقیقاً قفل می‌شوند (npm ci)؛ در غیر این صورت npm install
+  if [ -f "$INSTALL_DIR/package-lock.json" ]; then
+    (cd "$INSTALL_DIR" && npm ci --no-audit --no-fund)
+  else
+    (cd "$INSTALL_DIR" && npm install --no-audit --no-fund)
+  fi
+}
 npm_build()   { (cd "$INSTALL_DIR" && npm run build); }
 
 pm2_start() {
   (cd "$INSTALL_DIR" && pm2 delete "$APP_NAME" >/dev/null 2>&1; pm2 start ecosystem.config.cjs && pm2 save)
 }
-pm2_boot() { pm2 startup systemd -u root --hp /root || true; pm2 save; }
+pm2_boot() {
+  pm2 startup systemd -u root --hp /root || true
+  pm2 save
+  systemctl enable pm2-root >/dev/null 2>&1 || true
+  systemctl is-enabled pm2-root >/dev/null 2>&1   # 0 = بعد از ریبوت خودکار بالا می‌آید
+}
+
+# چرخش لاگ‌ها (PM2 + لاگ نصب) تا دیسک پر نشود
+write_logrotate() {
+  cat > "$LOGROTATE_FILE" <<LOGEOF
+${PM2_HOME:-/root/.pm2}/logs/*.log /var/log/modasr-install.log {
+    daily
+    rotate 14
+    maxsize 50M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+    su root root
+}
+LOGEOF
+}
+
+# سرورهای ۵۱۲MB–۱GB هنگام build (vite) بدون swap از کار می‌افتند
+ensure_swap() {
+  local mem_mb swap_mb
+  mem_mb="$(awk '/MemTotal/{print int($2/1024)}' /proc/meminfo)"
+  swap_mb="$(awk '/SwapTotal/{print int($2/1024)}' /proc/meminfo)"
+  [ "${mem_mb:-0}" -ge 1900 ] && return 0
+  [ "${swap_mb:-0}" -gt 0 ] && return 0
+  [ -e /swapfile ] && return 0
+  (fallocate -l 1G /swapfile 2>/dev/null || dd if=/dev/zero of=/swapfile bs=1M count=1024 status=none) \
+    && chmod 600 /swapfile && mkswap /swapfile >/dev/null && swapon /swapfile \
+    && { grep -q '^/swapfile' /etc/fstab || echo '/swapfile none swap sw 0 0' >> /etc/fstab; }
+}
 
 migrate_legacy_data() {
   local old="" d
@@ -289,12 +350,16 @@ write_nginx() {
   cat > /etc/nginx/conf.d/modasr-ratelimit.conf <<'EOF'
 limit_req_zone $binary_remote_addr zone=modasr_api:10m rate=10r/s;
 limit_req_zone $binary_remote_addr zone=modasr_login:10m rate=5r/m;
+map $http_upgrade $modasr_connection_upgrade { default upgrade; '' close; }
 EOF
   cat > "$NGINX_SITE" <<'EOF'
 server {
     listen 80;
     server_name __DOMAIN__;
-    client_max_body_size 25m;
+    client_max_body_size 21m;   # بزرگ‌ترین درخواست مجاز: بازیابی بک‌آپ (۲۰MB)
+    limit_req_status 429;
+    client_header_timeout 15s;
+    client_body_timeout 30s;
 
     # هدرهای امنیتی (X-Frame-Options عمداً نیست؛ مینی‌اپ داخل تلگرام وب باز می‌شود)
     add_header X-Content-Type-Options "nosniff" always;
@@ -317,7 +382,7 @@ server {
         proxy_pass http://127.0.0.1:__PORT__;
         proxy_http_version 1.1;
         proxy_set_header Upgrade $http_upgrade;
-        proxy_set_header Connection 'upgrade';
+        proxy_set_header Connection $modasr_connection_upgrade;
         proxy_set_header Host $host;
         proxy_cache_bypass $http_upgrade;
         proxy_read_timeout 120s;
@@ -333,28 +398,53 @@ EOF
 }
 
 # فایروال + Fail2Ban (پورت SSH به‌صورت خودکار تشخیص داده می‌شود تا قفل نشوید)
+ssh_ports() {
+  { sshd -T 2>/dev/null | awk '/^port /{print $2}'
+    ss -H -ltnp 2>/dev/null | awk '/"sshd"/{n=split($4,a,":"); print a[n]}'
+  } | sort -un | tr '\n' ' '
+}
+
 harden_server() {
-  local ssh_port
-  ssh_port="$(sshd -T 2>/dev/null | awk '/^port /{print $2; exit}')"; ssh_port="${ssh_port:-22}"
+  local ports p; ports="$(ssh_ports)"; ports="${ports:-22}"
   $APT install ufw fail2ban || return 1
-  ufw allow "${ssh_port}/tcp" && ufw allow 80/tcp && ufw allow 443/tcp || return 1
-  [ -z "$DOMAIN_NAME" ] && ufw allow "${APP_PORT}/tcp"
-  ufw --force enable || return 1
-  cat > /etc/fail2ban/jail.d/modasr.conf <<EOF
+  ufw default deny incoming  >/dev/null || return 1
+  ufw default allow outgoing >/dev/null || return 1
+  for p in $ports; do ufw limit "${p}/tcp" >/dev/null || return 1; done   # SSH + محدودیت تلاش اتصال
+  ufw allow 80/tcp >/dev/null && ufw allow 443/tcp >/dev/null || return 1
+  [ -z "$DOMAIN_NAME" ] && ufw allow "${APP_PORT}/tcp" >/dev/null
+  ufw --force enable >/dev/null || return 1
+  local jail_ports; jail_ports="$(echo $ports | tr ' ' ',')"
+  cat > /etc/fail2ban/jail.d/modasr.conf <<F2BEOF
 [sshd]
 enabled = true
 backend = systemd
-port = ${ssh_port}
+port = ${jail_ports}
 maxretry = 5
 findtime = 10m
 bantime = 1h
-EOF
+F2BEOF
+  # ریت‌لیمیت Nginx (اسکنرها / فشار روی ورود پنل) → بن موقت؛ فقط وقتی لاگ Nginx وجود دارد
+  if [ -n "$DOMAIN_NAME" ] && [ -f /var/log/nginx/error.log ]; then
+    cat >> /etc/fail2ban/jail.d/modasr.conf <<F2BEOF
+
+[nginx-limit-req]
+enabled = true
+port = http,https
+logpath = /var/log/nginx/error.log
+maxretry = 20
+findtime = 10m
+bantime = 1h
+F2BEOF
+  fi
   systemctl enable --now fail2ban && systemctl restart fail2ban
 }
 
 issue_ssl() { # issue_ssl DOMAIN
-  certbot --nginx -d "$1" --non-interactive --agree-tos --register-unsafely-without-email \
-    --redirect --keep-until-expiring
+  local mail_args=(--register-unsafely-without-email)
+  [ -n "$A_EMAIL" ] && mail_args=(--email "$A_EMAIL")
+  certbot --nginx -d "$1" --non-interactive --agree-tos "${mail_args[@]}" \
+    --redirect --keep-until-expiring || return 1
+  systemctl enable --now certbot.timer >/dev/null 2>&1 || true   # تمدید خودکار
 }
 
 install_cli() {
@@ -501,6 +591,7 @@ cmd_install() {
   fi
 
   step "نصب پیش‌نیازها"
+  run_quiet "آماده‌سازی swap (فقط برای RAM کم)" ensure_swap || warn "ساخت swap ممکن نشد؛ اگر build با کمبود حافظه شکست خورد، swap دستی بسازید."
   run_quiet "به‌روزرسانی و نصب بسته‌های سیستم" pkg_base || exit 1
   if node_ok; then ok "Node.js $(node -v) آماده است"; else run_quiet "نصب Node.js 22" install_node || exit 1; fi
   if command -v pm2 >/dev/null 2>&1; then ok "PM2 آماده است"; else run_quiet "نصب PM2" install_pm2 || exit 1; fi
@@ -521,6 +612,7 @@ cmd_install() {
   set_env ADMIN_PASSWORD "$ADMIN_PASSWORD"
   set_env PORT "$APP_PORT"
   set_env DOMAIN "$DOMAIN_NAME"
+  ensure_env_defaults
   ok "فایل .env با دسترسی محدود ساخته شد"
   write_data_configs
 
@@ -529,7 +621,8 @@ cmd_install() {
 
   step "اجرای سرویس"
   run_quiet "راه‌اندازی با PM2" pm2_start || exit 1
-  run_quiet "فعال‌سازی اجرای خودکار بعد از ریبوت" pm2_boot
+  run_quiet "فعال‌سازی اجرای خودکار بعد از ریبوت" pm2_boot || warn "اجرای خودکار بعد از ریبوت تأیید نشد؛ «modasr doctor» را بزنید."
+  run_quiet "تنظیم چرخش لاگ‌ها (logrotate)" write_logrotate || warn "logrotate تنظیم نشد."
 
   if [ -n "$DOMAIN_NAME" ]; then
     step "وب‌سرور و SSL"
@@ -563,6 +656,7 @@ cmd_install() {
     fi
   else
     PANEL_URL="http://${SERVER_IP}:${APP_PORT}"; SSL_STATE="— (no domain)"
+    warn "بدون دامنه، پنل روی HTTP ساده است و رمز رمزنگاری‌نشده می‌رود. برای استفاده‌ی واقعی دامنه + SSL بگیرید (modasr ssl --domain ...)."
   fi
   MINI_URL="${PANEL_URL}/mini-modasr-arz"
   curl -fs --max-time 4 "http://127.0.0.1:${APP_PORT}/health" 2>/dev/null | grep -q '"status":"ok"' && RUN_STATE="Running"
@@ -609,14 +703,22 @@ do_update_steps() {
   git -C "$INSTALL_DIR" fetch --quiet origin ${BRANCH:+"$BRANCH"} && git -C "$INSTALL_DIR" reset --hard FETCH_HEAD
 }
 
+rollback_update() { # rollback_update FULL_COMMIT_HASH
+  git -C "$INSTALL_DIR" reset --hard "$1" >>"$LOG_FILE" 2>&1
+  run_quiet "نصب وابستگی‌های نسخه‌ی قبلی" npm_install
+  run_quiet "ساخت نسخه‌ی قبلی" npm_build
+  run_quiet "ری‌استارت سرویس" pm2_start
+}
+
 cmd_update() {
   need_root; need_installed
   : > "$LOG_FILE"; chmod 600 "$LOG_FILE"
   banner
   [ -z "$BRANCH" ] && BRANCH="$(git -C "$INSTALL_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null)"
 
-  local before after
+  local before after before_full
   before="$(git -C "$INSTALL_DIR" rev-parse --short HEAD)"
+  before_full="$(git -C "$INSTALL_DIR" rev-parse HEAD)"
   step "بررسی نسخه‌ی جدید"
   git -C "$INSTALL_DIR" fetch --quiet origin ${BRANCH:+"$BRANCH"} 2>>"$LOG_FILE" || die "اتصال به گیت‌هاب برقرار نشد."
   after="$(git -C "$INSTALL_DIR" rev-parse --short FETCH_HEAD)"
@@ -631,9 +733,14 @@ cmd_update() {
 
   local bk; bk="$(backup_data)"; [ -n "$bk" ] && ok "پشتیبان‌گیری: $bk"
   run_quiet "دریافت کد جدید" do_update_steps || exit 1
-  run_quiet "به‌روزرسانی وابستگی‌ها" npm_install || exit 1
-  run_quiet "ساخت نسخه‌ی نهایی" npm_build || exit 1
+  ensure_env_defaults
+  if ! run_quiet "به‌روزرسانی وابستگی‌ها" npm_install || ! run_quiet "ساخت نسخه‌ی نهایی" npm_build; then
+    warn "به‌روزرسانی شکست خورد؛ بازگشت به نسخه‌ی قبلی (${before})..."
+    rollback_update "$before_full"
+    die "به‌روزرسانی لغو شد و نسخه‌ی قبلی بازگردانده شد. جزئیات: $LOG_FILE"
+  fi
   run_quiet "ری‌استارت سرویس" pm2_start || exit 1
+  write_logrotate
   install_cli
 
   local port; port="$(get_env PORT)"; port="${port:-3000}"
@@ -660,7 +767,7 @@ cmd_remove() {
 
   pm2 delete "$APP_NAME" >/dev/null 2>&1; pm2 save >/dev/null 2>&1
   ok "سرویس متوقف و حذف شد"
-  rm -f /etc/nginx/sites-enabled/modasr "$NGINX_SITE" /etc/nginx/conf.d/modasr-ratelimit.conf
+  rm -f /etc/nginx/sites-enabled/modasr "$NGINX_SITE" /etc/nginx/conf.d/modasr-ratelimit.conf "$LOGROTATE_FILE"
   command -v nginx >/dev/null 2>&1 && nginx -t >/dev/null 2>&1 && systemctl reload nginx >/dev/null 2>&1
   ok "پیکربندی Nginx حذف شد"
   if [ -n "$INSTALL_DIR" ] && [ "$INSTALL_DIR" != "/" ] && { [ -f "$INSTALL_DIR/server.ts" ] || [ -f "$INSTALL_DIR/.env" ]; }; then
@@ -743,6 +850,51 @@ cmd_status() {
   pm2 status "$APP_NAME" 2>/dev/null
 }
 
+cmd_doctor() {
+  need_installed
+  local port domain bad=0 v
+  port="$(get_env PORT)"; port="${port:-3000}"; domain="$(get_env DOMAIN)"
+  c_ok()   { ok "$1"; }
+  c_bad()  { err "$1"; bad=$((bad+1)); }
+  c_warn() { warn "$1"; }
+  echo ""; say "  ${BOLD}🩺 بررسی سلامت نصب${NC}\n"
+
+  node_ok && c_ok "Node.js $(node -v)" || c_bad "نسخه‌ی Node مناسب نیست (نیاز: >=20.19 یا >=22.12)"
+  [ "$(stat -c %a "$INSTALL_DIR/.env" 2>/dev/null)" = "600" ] && c_ok ".env دسترسی 600 دارد" || c_bad ".env باید دسترسی 600 داشته باشد:  chmod 600 $INSTALL_DIR/.env"
+  [ -n "$(get_env ADMIN_PASSWORD)" ] && c_ok "رمز پنل تنظیم شده" || c_bad "رمز پنل تنظیم نشده (modasr passwd)"
+  v="$(get_env SESSION_SECRET)"
+  [ "${#v}" -ge 32 ] && c_ok "SESSION_SECRET تنظیم شده" || c_bad "SESSION_SECRET تنظیم نشده (modasr update آن را می‌سازد)"
+
+  pm2 describe "$APP_NAME" 2>/dev/null | sed 's/\x1b\[[0-9;]*m//g' | grep -qE 'status[^a-z]*online' \
+    && c_ok "سرویس PM2 در حال اجراست" || c_bad "سرویس PM2 متوقف است (modasr logs)"
+  systemctl is-enabled pm2-root >/dev/null 2>&1 && c_ok "PM2 بعد از ریبوت خودکار بالا می‌آید" || c_bad "اجرای خودکار PM2 بعد از ریبوت فعال نیست:  pm2 startup systemd -u root --hp /root && pm2 save"
+  curl -fs --max-time 4 "http://127.0.0.1:${port}/health" 2>/dev/null | grep -q '"status":"ok"' \
+    && c_ok "/health پاسخ می‌دهد" || c_bad "/health پاسخ نمی‌دهد"
+
+  local listen; listen="$(ss -H -ltn 2>/dev/null | awk -v p=":${port}" '$4 ~ p"$" {print $4; exit}')"
+  if [ -n "$domain" ]; then
+    case "$listen" in 127.0.0.1:*|\[::1\]:*) c_ok "برنامه فقط روی loopback گوش می‌دهد (${listen})" ;;
+      *) c_warn "برنامه روی ${listen:-?} گوش می‌دهد؛ با دامنه بهتر است فقط روی 127.0.0.1 باشد (HOST=127.0.0.1 و modasr restart)" ;; esac
+    if command -v nginx >/dev/null 2>&1; then
+      nginx -t >/dev/null 2>&1 && c_ok "پیکربندی Nginx معتبر است" || c_bad "nginx -t خطا دارد"
+      systemctl is-active nginx >/dev/null 2>&1 && c_ok "Nginx فعال است" || c_bad "Nginx فعال نیست"
+    else c_bad "Nginx نصب نیست"; fi
+    [ -f "/etc/letsencrypt/live/${domain}/fullchain.pem" ] && c_ok "گواهی SSL موجود است" || c_warn "SSL فعال نیست (modasr ssl)"
+    systemctl is-enabled certbot.timer >/dev/null 2>&1 && c_ok "تمدید خودکار SSL فعال است" || c_warn "certbot.timer فعال نیست"
+  else
+    c_warn "دامنه تنظیم نشده؛ پنل روی HTTP ساده در دسترس است"
+  fi
+
+  command -v ufw >/dev/null 2>&1 && ufw status 2>/dev/null | grep -q "Status: active" && c_ok "فایروال UFW فعال است" || c_warn "UFW فعال نیست"
+  systemctl is-active fail2ban >/dev/null 2>&1 && c_ok "Fail2Ban فعال است" || c_warn "Fail2Ban فعال نیست"
+  [ -f "$LOGROTATE_FILE" ] && c_ok "چرخش لاگ‌ها تنظیم شده" || c_warn "logrotate تنظیم نشده (modasr update)"
+
+  local free_mb; free_mb="$(df -Pm "$INSTALL_DIR" | awk 'NR==2{print $4}')"
+  [ "${free_mb:-0}" -ge 500 ] && c_ok "فضای آزاد دیسک: ${free_mb}MB" || c_bad "فضای دیسک کم است (${free_mb}MB)"
+  echo ""
+  if [ "$bad" -eq 0 ]; then say "  ${GREEN}${BOLD}همه‌چیز سالم است.${NC}\n"; else say "  ${RED}${BOLD}${bad} مشکل پیدا شد.${NC}\n"; return 1; fi
+}
+
 cmd_logs()    { need_installed; pm2 logs "$APP_NAME" --lines 60; }
 cmd_restart() { need_root; need_installed; pm2 restart "$APP_NAME" && ok "ری‌استارت شد."; }
 
@@ -770,12 +922,16 @@ cmd_restore() {
   fi
   [ -f "$f" ] || die "فایل پیدا نشد: $f"
   tar -tzf "$f" 2>/dev/null | grep -qE '^(data/|\.env$)' || die "این فایل یک پشتیبان معتبر MODASR نیست."
+  # فقط data/ و .env مجاز است؛ مسیر مطلق یا «..» (جایگزینی کد برنامه / path traversal) رد می‌شود
+  local bad; bad="$(tar -tzf "$f" 2>/dev/null | grep -vE '^(data(/.*)?|\.env)$' | head -1)"
+  [ -z "$bad" ] || die "پشتیبان شامل مسیر غیرمجاز است و رد شد: $bad"
+  tar -tzf "$f" 2>/dev/null | grep -qE '(^|/)\.\.(/|$)' && die "پشتیبان شامل مسیر «..» است و رد شد."
   warn "اطلاعات فعلی با محتوای این پشتیبان جایگزین می‌شود."
   confirm "ادامه دهم؟" n || die "لغو شد."
   local tmp; tmp="$(mktemp)"; cp "$f" "$tmp"
   local safety; safety="$(backup_data)"; [ -n "$safety" ] && ok "نسخه‌ی فعلی هم ذخیره شد: $safety"
   pm2 stop "$APP_NAME" >/dev/null 2>&1
-  tar -xzf "$tmp" -C "$INSTALL_DIR" && chmod 600 "$INSTALL_DIR/.env" 2>/dev/null
+  tar -xzf "$tmp" -C "$INSTALL_DIR" --no-same-owner && chmod 600 "$INSTALL_DIR/.env" 2>/dev/null
   rm -f "$tmp"
   pm2 restart "$APP_NAME" >/dev/null 2>&1
   local port; port="$(get_env PORT)"; port="${port:-3000}"
@@ -828,6 +984,7 @@ cmd_help() {
     backup      پشتیبان‌گیری از کاربران، تنظیمات و .env
     restore     بازیابی از پشتیبان (modasr restore [فایل])
     passwd      تغییر رمز پنل مدیریت
+    doctor      بررسی سلامت (Node, PM2, Nginx, SSL, UFW, Fail2Ban, ...)
     menu        منوی تعاملی (پیش‌فرض)
 
   ${PURPLE}${BOLD}پارامترهای نصب${NC}
@@ -837,7 +994,8 @@ cmd_help() {
     --channel <@ch>   کانال ارسال ساعتی (اختیاری)
     --domain <d>      دامنه (مثال: arz.example.com)
     --port <N>        پورت برنامه (پیش‌فرض 3000)
-    --password <P>    رمز پنل (اگر ندهید تصادفی ساخته می‌شود)
+    --password <P>    رمز پنل (اگر ندهید تصادفی ساخته می‌شود). امن‌تر: متغیر MODASR_PASSWORD
+    --email <mail>    ایمیل برای Let's Encrypt (اختیاری؛ متغیر MODASR_EMAIL)
     --repo <url>      آدرس مخزن گیت
     --branch <b>      شاخه‌ی گیت
     --no-ssl          عدم صدور SSL
@@ -876,6 +1034,7 @@ cmd_menu() {
     say "   ${CYAN} 9)${NC} پشتیبان‌گیری"
     say "   ${CYAN}10)${NC} بازیابی از پشتیبان"
     say "   ${CYAN}11)${NC} راهنما و پارامترها"
+    say "   ${CYAN}12)${NC} بررسی سلامت (doctor)"
     say "   ${CYAN} 0)${NC} خروج"
     echo ""
     local c; read -r -p "$(echo -e "  ${BOLD}انتخاب شما:${NC} ")" c
@@ -891,6 +1050,7 @@ cmd_menu() {
       9)  (cmd_backup);  read -r -p "  Enter برای بازگشت..." _ ;;
       10) (cmd_restore); read -r -p "  Enter برای بازگشت..." _ ;;
       11) cmd_help;      read -r -p "  Enter برای بازگشت..." _ ;;
+      12) (cmd_doctor);  read -r -p "  Enter برای بازگشت..." _ ;;
       0|q|Q) exit 0 ;;
       *) ;;
     esac
@@ -913,6 +1073,7 @@ main() {
       --domain)   A_DOMAIN="$2"; shift 2 ;;
       --port)     A_PORT="$2"; shift 2 ;;
       --password) A_PASSWORD="$2"; shift 2 ;;
+      --email)    A_EMAIL="$2"; shift 2 ;;
       --repo)     REPO_URL="$2"; shift 2 ;;
       --branch)   BRANCH="$2"; shift 2 ;;
       --no-ssl)   NO_SSL=1; shift ;;
@@ -937,6 +1098,7 @@ main() {
     backup)   cmd_backup ;;
     restore)  cmd_restore ;;
     passwd|password) cmd_passwd ;;
+    doctor)   cmd_doctor ;;
     help)     cmd_help ;;
     menu)     cmd_menu ;;
     *) die "دستور ناشناخته: $cmd  (modasr help)" ;;
