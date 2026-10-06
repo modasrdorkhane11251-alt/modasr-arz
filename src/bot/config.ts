@@ -3,15 +3,21 @@
  * Preserves all tokens, URLs, admin settings, and cryptocurrency aliases from index.php & config.php
  */
 
+import 'dotenv/config';
+import crypto from 'crypto';
+
 export const DEFAULT_BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 export const BOT_CONFIG = {
   token: process.env.BOT_TOKEN || '',
   botUsername: process.env.BOT_USERNAME || 'Modasr_Arzbot',
   adminId: parseInt(process.env.ADMIN_ID || '0', 10),
-  nobitexApi: 'https://api.fast-creat.ir/nobitex/v2/orderbook/all',
-  fastApiUrl: 'https://api.fast-creat.ir/nobitex/v2?apikey=6750948508:dNoLxDYryOH7QS5@Api_ManagerRoBot',
-  goldApiUrl: 'https://api.fast-creat.ir/gold?apikey=6750948508:ZqGU7X4Vj05BwLt@Api_ManagerRoBot',
+  // Secret used to verify that webhook calls really come from Telegram
+  webhookSecret: crypto
+    .createHash('sha256')
+    .update(`${process.env.BOT_TOKEN || ''}:webhook`)
+    .digest('hex')
+    .slice(0, 48),
   nobitexDirectApi: 'https://api.nobitex.ir/market/stats',
 };
 

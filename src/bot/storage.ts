@@ -1,3 +1,4 @@
+import { BOT_CONFIG } from './config';
 import fs from 'fs';
 import path from 'path';
 
@@ -456,12 +457,13 @@ export class BotStorage {
   }
 
   static getAdminAlertConfig(): AdminAlertConfig {
-    if (!fs.existsSync(ADMIN_ALERT_CONFIG_FILE)) return DEFAULT_ADMIN_ALERT_CONFIG;
+    const base = { ...DEFAULT_ADMIN_ALERT_CONFIG, adminId: BOT_CONFIG.adminId };
+    if (!fs.existsSync(ADMIN_ALERT_CONFIG_FILE)) return base;
     try {
       const data = JSON.parse(fs.readFileSync(ADMIN_ALERT_CONFIG_FILE, 'utf-8'));
-      return { ...DEFAULT_ADMIN_ALERT_CONFIG, ...data };
+      return { ...base, ...data };
     } catch {
-      return DEFAULT_ADMIN_ALERT_CONFIG;
+      return base;
     }
   }
 

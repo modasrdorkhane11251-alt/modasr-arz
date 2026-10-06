@@ -69,6 +69,7 @@ export class WebhookManager {
           url: webhookUrl,
           drop_pending_updates: dropPendingUpdates,
           allowed_updates: ['message', 'callback_query', 'channel_post'],
+          secret_token: BOT_CONFIG.webhookSecret,
         }),
       });
       const data = await res.json();
@@ -85,6 +86,7 @@ export class WebhookManager {
             url: webhookUrl,
             drop_pending_updates: dropPendingUpdates,
             allowed_updates: ['message', 'callback_query', 'channel_post'],
+          secret_token: BOT_CONFIG.webhookSecret,
           }),
         });
         return await retryRes.json();

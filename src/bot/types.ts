@@ -21,7 +21,7 @@ export interface AdminAlertConfig {
 
 export const DEFAULT_ADMIN_ALERT_CONFIG: AdminAlertConfig = {
   isEnabled: true,
-  adminId: 1355650097,
+  adminId: 0,
   notifyOnApiErrors: true,
   notifyOnTelegramErrors: true,
   notifyOnChannelErrors: true,
