@@ -2,5 +2,5 @@
   "name": "mini MODASR arz - ربات تلگرام و مینی اپ قیمت لحظه‌ای",
   "description": "سرور و مینی اپ اختصاصی تلگرام mini MODASR arz استعلام زنده قیمت ارز، طلا و کریپتو با شاخص لحظه‌ای",
   "requestFramePermissions": [],
-  "majorCapabilities": []
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
 }

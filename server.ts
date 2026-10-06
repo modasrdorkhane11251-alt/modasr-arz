@@ -1,9 +1,20 @@
 import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
-import crypto from 'crypto';
 import fs from 'fs';
 import { BOT_CONFIG, DEFAULT_BOT_TOKEN } from './src/bot/config';
+import {
+  SESSION_COOKIE,
+  safeEqual,
+  parseCookies,
+  createSessionToken,
+  verifySessionToken,
+  sessionCookie,
+  clearCookie,
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from './src/bot/auth';
 import { BotStorage } from './src/bot/storage';
 import { TelegramService, TelegramUpdate } from './src/bot/telegramService';
 import { WebhookManager } from './src/bot/webhookManager';
@@ -13,14 +24,15 @@ import { ImageCardService } from './src/bot/imageCardService';
 import { ChannelPostService } from './src/bot/channelPostService';
 import { TunnelService } from './src/bot/tunnelService';
 import { AdminAlertService } from './src/bot/adminAlertService';
+import { KEYBOARD_THEME_PRESETS } from './src/bot/types';
 
 dotenv.config();
 
 const app = express();
 const PORT = parseInt(process.env.PORT || '3000', 10);
 
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
+app.use(express.json({ limit: '25mb' }));
+app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
 // Block Google and search engine indexation
 app.use((_req, res, next) => {
@@ -28,16 +40,18 @@ app.use((_req, res, next) => {
   next();
 });
 
-// ---------------------------------------------------------------------------
-// Security: admin authentication (HTTP Basic) + Telegram webhook verification
-// ---------------------------------------------------------------------------
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+// Health check (public, no sensitive data) - used by installer, Nginx and monitoring
+const STARTED_AT = Date.now();
+app.get('/health', (_req: Request, res: Response) => {
+  const sec = Math.floor((Date.now() - STARTED_AT) / 1000);
+  const uptime = sec >= 3600 ? `${Math.floor(sec / 3600)}h` : sec >= 60 ? `${Math.floor(sec / 60)}m` : `${sec}s`;
+  res.json({ status: 'ok', storage: 'ok', bot: BOT_CONFIG.token ? 'configured' : 'missing_token', uptime });
+});
 
-const safeEqual = (a: string, b: string): boolean => {
-  const ha = crypto.createHash('sha256').update(a).digest();
-  const hb = crypto.createHash('sha256').update(b).digest();
-  return crypto.timingSafeEqual(ha, hb);
-};
+// ---------------------------------------------------------------------------
+// Security: admin login (cookie session) + Telegram webhook verification
+// ---------------------------------------------------------------------------
+app.set('trust proxy', 1); // behind Nginx
 
 const WEBHOOK_PATHS = new Set(['/api/telegram/webhook', '/index.php', '/webhook']);
 // Public endpoints needed by the Telegram Mini App (normal users)
@@ -47,7 +61,21 @@ const isPublicRoute = (req: Request): boolean =>
 const isAdminApi = (req: Request): boolean =>
   req.path.startsWith('/api/bot/') ||
   req.path.startsWith('/api/channel/') ||
-  req.path.startsWith('/api/telegram/');
+  req.path.startsWith('/api/telegram/') ||
+  req.path.startsWith('/api/backup/');
+
+const isAuthenticated = (req: Request): boolean => {
+  if (!process.env.ADMIN_PASSWORD) return false;
+  const cookies = parseCookies(req.headers.cookie);
+  if (verifySessionToken(cookies[SESSION_COOKIE])) return true;
+  // Basic auth stays supported for scripts / curl (no browser popup is triggered)
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf-8');
+    return safeEqual(decoded.slice(decoded.indexOf(':') + 1), process.env.ADMIN_PASSWORD);
+  }
+  return false;
+};
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   // Webhook calls: must carry the secret that we gave Telegram in setWebhook
@@ -61,21 +89,74 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 
   if (!isAdminApi(req) || isPublicRoute(req)) return next();
 
-  if (!ADMIN_PASSWORD) {
+  if (!process.env.ADMIN_PASSWORD) {
     return res.status(503).json({
       ok: false,
-      error: 'ADMIN_PASSWORD is not set. Add ADMIN_PASSWORD to your .env file and restart.',
+      error: 'ADMIN_PASSWORD is not set. Run "modasr passwd" on the server.',
     });
   }
-
-  const header = req.headers.authorization || '';
-  if (header.startsWith('Basic ')) {
-    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf-8');
-    const password = decoded.slice(decoded.indexOf(':') + 1);
-    if (safeEqual(password, ADMIN_PASSWORD)) return next();
-  }
-  res.setHeader('WWW-Authenticate', 'Basic realm="MODASR Admin Panel", charset="UTF-8"');
+  if (isAuthenticated(req)) return next();
   return res.status(401).json({ ok: false, error: 'Unauthorized' });
+});
+
+// Login page API
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  if (!process.env.ADMIN_PASSWORD) {
+    return res.status(503).json({ ok: false, error: 'not_configured' });
+  }
+  const ip = req.ip || req.socket.remoteAddress || 'unknown';
+  const gate = checkLoginAllowed(ip);
+  if (!gate.allowed) {
+    res.setHeader('Retry-After', String(gate.retryAfterSec));
+    return res.status(429).json({ ok: false, error: 'too_many_attempts', retryAfterSec: gate.retryAfterSec });
+  }
+  const password = typeof req.body?.password === 'string' ? req.body.password : '';
+  if (!password || !safeEqual(password, process.env.ADMIN_PASSWORD)) {
+    recordLoginFailure(ip);
+    return res.status(401).json({ ok: false, error: 'invalid_password' });
+  }
+  recordLoginSuccess(ip);
+  res.setHeader('Set-Cookie', sessionCookie(createSessionToken(), req.secure));
+  return res.json({ ok: true });
+});
+
+app.get('/api/auth/me', (req: Request, res: Response) => {
+  return res.json({
+    ok: true,
+    configured: Boolean(process.env.ADMIN_PASSWORD),
+    authenticated: isAuthenticated(req),
+  });
+});
+
+app.post('/api/auth/logout', (req: Request, res: Response) => {
+  res.setHeader('Set-Cookie', clearCookie(req.secure));
+  return res.json({ ok: true });
+});
+
+// 0. Backup & Restore (پشتیبان‌گیری کامل دیتابیس، دکمه‌ها و تنظیمات)
+app.get(['/api/backup/export', '/api/backup/download'], (req: Request, res: Response) => {
+  try {
+    const backup = BotStorage.exportBackup();
+    const fileName = `modasr-arz-backup-${new Date().toISOString().split('T')[0]}.json`;
+    res.setHeader('Content-Type', 'application/json');
+    res.setHeader('Content-Disposition', `attachment; filename="${fileName}"`);
+    return res.send(JSON.stringify(backup, null, 2));
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/backup/restore', (req: Request, res: Response) => {
+  try {
+    const { backupData } = req.body;
+    if (!backupData) {
+      return res.status(400).json({ ok: false, error: 'داده‌های فایل بک‌آپ ارسال نشده است.' });
+    }
+    const result = BotStorage.restoreBackup(backupData);
+    return res.json({ ok: result.success, ...result });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
 });
 
 // 1. Telegram Webhook Endpoint
@@ -259,8 +340,38 @@ app.get('/api/bot/ad-config', (req: Request, res: Response) => {
   return res.json({ ok: true, adConfig: BotStorage.getAdConfig() });
 });
 
+// 7.15 Global Keyboard HEX Color Theme Studio (تنظیم کدهای رنگی سفارشی کیبورد شیشه‌ای)
+app.get('/api/bot/keyboard-theme', (req: Request, res: Response) => {
+  return res.json({
+    ok: true,
+    theme: BotStorage.getKeyboardTheme(),
+    presets: KEYBOARD_THEME_PRESETS,
+  });
+});
+
+app.post('/api/bot/keyboard-theme', (req: Request, res: Response) => {
+  const updated = BotStorage.setKeyboardTheme(req.body);
+  return res.json({
+    ok: true,
+    theme: updated,
+    message: 'کدهای رنگی سفارشی کیبورد تلگرام با موفقیت ذخیره و اعمال شدند.',
+  });
+});
+
 app.post('/api/bot/ad-config', (req: Request, res: Response) => {
-  const { buttonText, buttonUrl, headerIntro, isEnabled, enableCharts, watermarkTag, customButtons } = req.body;
+  const {
+    buttonText,
+    buttonUrl,
+    headerIntro,
+    isEnabled,
+    enableCharts,
+    watermarkTag,
+    customButtons,
+    miniAppLogoUrl,
+    miniAppBannerUrl,
+    miniAppTitle,
+    miniAppSubtitle,
+  } = req.body;
   const updated = BotStorage.setAdConfig({
     buttonText,
     buttonUrl,
@@ -269,6 +380,10 @@ app.post('/api/bot/ad-config', (req: Request, res: Response) => {
     enableCharts: enableCharts !== undefined ? !!enableCharts : true,
     watermarkTag: watermarkTag || '@MODASR_ARZ | MODASRP',
     customButtons: Array.isArray(customButtons) ? customButtons : undefined,
+    miniAppLogoUrl: miniAppLogoUrl !== undefined ? miniAppLogoUrl : undefined,
+    miniAppBannerUrl: miniAppBannerUrl !== undefined ? miniAppBannerUrl : undefined,
+    miniAppTitle: miniAppTitle !== undefined ? miniAppTitle : undefined,
+    miniAppSubtitle: miniAppSubtitle !== undefined ? miniAppSubtitle : undefined,
   });
   return res.json({ ok: true, adConfig: updated });
 });
@@ -435,12 +550,15 @@ app.get('/api/miniapp/data', async (req: Request, res: Response) => {
       ok: true,
       data,
       brand: {
-        title: adConfig.headerIntro || 'mini MODASR arz • مـداسـر ارز',
+        title: adConfig.miniAppTitle || adConfig.headerIntro || 'mini MODASR arz',
+        subtitle: adConfig.miniAppSubtitle || 'پیشخوان هوشمند طلا، ارز و کریپتو',
         channelUrl: adConfig.buttonUrl || 'https://t.me/MODASR_ARZ',
         channelTag: adConfig.watermarkTag || '@MODASR_ARZ',
         botUsername: BOT_CONFIG.botUsername,
         publicMiniAppUrl: TunnelService.getMiniAppUrl(),
         isTunnelActive: TunnelService.isTunnelActive(),
+        miniAppLogoUrl: adConfig.miniAppLogoUrl || '',
+        miniAppBannerUrl: adConfig.miniAppBannerUrl || '',
       },
     });
   } catch (error: any) {
@@ -524,7 +642,7 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
       return res.status(400).json({ ok: false, error: 'Text is required' });
     }
 
-    const effectiveFromId = fromId ? parseInt(fromId, 10) : BOT_CONFIG.adminId;
+    const effectiveFromId = fromId ? parseInt(fromId, 10) : (BOT_CONFIG.adminId || 999999999);
     const effectiveChatId = chatId ? parseInt(chatId, 10) : effectiveFromId;
 
     const fakeUpdate: TelegramUpdate = {
