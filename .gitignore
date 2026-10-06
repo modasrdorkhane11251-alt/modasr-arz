@@ -1,0 +1,18 @@
+node_modules/
+build/
+dist/
+coverage/
+server.js
+.DS_Store
+*.log
+*.zip
+
+# Secrets (never commit)
+.env
+.env.*
+!.env.example
+
+# Runtime data (users, logs, per-server settings)
+data/*
+!data/.gitkeep
+!data/packs_details.json
