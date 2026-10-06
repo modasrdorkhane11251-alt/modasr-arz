@@ -7,7 +7,6 @@ import { StatsBroadcastPanel } from './components/StatsBroadcastPanel';
 import { ActivityLogsPanel } from './components/ActivityLogsPanel';
 import { MiniAppView } from './components/MiniAppView';
 import { MiniAppPreviewPanel } from './components/MiniAppPreviewPanel';
-import { DEFAULT_BOT_TOKEN } from './bot/config';
 
 export default function App() {
   const isDirectMiniApp = typeof window !== 'undefined' && (
@@ -25,7 +24,7 @@ export default function App() {
   const [statusData, setStatusData] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
   const [pricesData, setPricesData] = useState<any>(null);
-  const [activeToken, setActiveToken] = useState<string>(DEFAULT_BOT_TOKEN);
+  const [activeToken, setActiveToken] = useState<string>('');
   const [loading, setLoading] = useState<boolean>(false);
 
   const fetchStatus = async () => {
@@ -74,6 +73,7 @@ export default function App() {
   };
 
   useEffect(() => {
+    if (isDirectMiniApp) return;
     refreshAll();
     const interval = setInterval(() => {
       fetchPrices();
@@ -242,7 +242,7 @@ export default function App() {
       <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
           <span>ربات هوشمند استعلام قیمت طلا و ارز دیجیتال (Modasr Arzbot)</span>
-          <span className="font-mono text-slate-600">ID: 8644317369 / Admin: 1355650097</span>
+          <span className="font-mono text-slate-600">MODASR ARZ</span>
         </div>
       </footer>
     </div>
