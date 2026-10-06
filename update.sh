@@ -15,7 +15,7 @@ echo -e "${CYAN}${BOLD}🔄 در حال دریافت آخرین آپدیت‌ه�
 git pull || true
 
 echo -e "${CYAN}📥 در حال بررسی و نصب پکیج‌های جدید...${NC}"
-npm install --legacy-peer-deps
+npm install
 
 echo -e "${CYAN}🔨 در حال بیلد مجدد پروژه...${NC}"
 npm run build

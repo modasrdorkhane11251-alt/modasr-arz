@@ -91,6 +91,16 @@ echo -e "\n${CYAN}آیدی کانال تلگرام برای ارسال خودک�
 read -r -p "📢 Channel ID (مثال: @MyChannel): " INPUT_CHANNEL
 CHANNEL_ID="${INPUT_CHANNEL:-@MODASR_ARZ}"
 
+# رمز پنل مدیریت وب (الزامی)
+echo -e "\n${CYAN}یک رمز قوی برای پنل مدیریت وب انتخاب کنید (خالی بگذارید تا خودکار ساخته شود):${NC}"
+read -r -s -p "🔐 Admin Panel Password: " INPUT_PASS
+echo ""
+if [ -z "$INPUT_PASS" ]; then
+  INPUT_PASS="$(head -c 64 /dev/urandom | base64 | tr -dc 'A-Za-z0-9' | head -c 20)"
+  echo -e "${YELLOW}🔑 رمز خودکار ساخته شد: ${BOLD}${INPUT_PASS}${NC}${YELLOW} (همین الان ذخیره‌اش کنید)${NC}"
+fi
+ADMIN_PASSWORD="$INPUT_PASS"
+
 # ۴. تنظیمات وب‌سرور و دامنه
 echo -e "\n${PURPLE}${BOLD}[ مرحله ۳: تنظیمات دامنه و پورت سرور ]${NC}"
 echo -e "${CYAN}در صورت داشتن دامنه یا ساب‌دامین اختصاصی برای مینی‌اپ و پنل مدیریت، آن را وارد کنید:${NC}"
@@ -134,11 +144,14 @@ BOT_USERNAME="${BOT_USERNAME}"
 PORT="${APP_PORT}"
 NODE_ENV="production"
 DOMAIN="${DOMAIN_NAME}"
+ADMIN_PASSWORD="${ADMIN_PASSWORD}"
 EOF
+chmod 600 .env
 
 # ۹. مقداردهی فایل‌های تنظیمات اختصاصی در پوشه data/
 mkdir -p data
 
+if [ ! -f data/ad_config.json ]; then
 cat <<EOF > data/ad_config.json
 {
   "buttonText": "📢 عضویت در کانال رسمی ↗️",
@@ -149,7 +162,9 @@ cat <<EOF > data/ad_config.json
   "watermarkTag": "${CHANNEL_ID} | MODASRP"
 }
 EOF
+fi
 
+if [ ! -f data/channel_poster_config.json ]; then
 cat <<EOF > data/channel_poster_config.json
 {
   "isEnabled": true,
@@ -159,7 +174,9 @@ cat <<EOF > data/channel_poster_config.json
   "lastPostStatus": "pending"
 }
 EOF
+fi
 
+if [ ! -f data/admin_alert_config.json ]; then
 cat <<EOF > data/admin_alert_config.json
 {
   "isEnabled": true,
@@ -172,10 +189,11 @@ cat <<EOF > data/admin_alert_config.json
   "rateLimitMinutes": 2
 }
 EOF
+fi
 
 # ۱۰. نصب پکیج‌های پروژه و بیلد نهایی
-echo -e "${CYAN}📥 در حال نصب پکیج‌های NPM (npm install --legacy-peer-deps)...${NC}"
-npm install --legacy-peer-deps
+echo -e "${CYAN}📥 در حال نصب پکیج‌های NPM (npm install)...${NC}"
+npm install
 
 echo -e "${CYAN}🔨 در حال کامپایل و ساخت فایل‌های نهایی (npm run build)...${NC}"
 npm run build
@@ -245,6 +263,7 @@ else
   echo -e "📱 ${BOLD}لینک مینی‌اپ:${NC} http://${SERVER_IP}:${APP_PORT}/mini-modasr-arz"
 fi
 
+echo -e "🔐 ${BOLD}رمز پنل وب:${NC} (همانی که وارد کردید؛ نام کاربری هر چیزی می‌تواند باشد، مثلاً admin)"
 echo -e "\n${PURPLE}${BOLD}[ دستورات کاربردی مدیریت سرور ]${NC}"
 echo -e "• ${CYAN}مشاهده لاگ‌های زنده ربات:${NC}  pm2 logs modasr-bot"
 echo -e "• ${CYAN}ری‌استارت کردن ربات:${NC}      pm2 restart modasr-bot"

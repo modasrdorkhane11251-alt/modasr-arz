@@ -1,6 +1,7 @@
-import express, { Request, Response } from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
+import crypto from 'crypto';
 import fs from 'fs';
 import { BOT_CONFIG, DEFAULT_BOT_TOKEN } from './src/bot/config';
 import { BotStorage } from './src/bot/storage';
@@ -27,15 +28,54 @@ app.use((_req, res, next) => {
   next();
 });
 
-// 0. Download Full Project ZIP for Easy GitHub Upload & VPS Deployment
-app.get(['/api/download-zip', '/download-zip', '/modasr-arz-project.zip'], (req: Request, res: Response) => {
-  const zipPath = path.resolve(process.cwd(), 'modasr-arz-project.zip');
-  if (fs.existsSync(zipPath)) {
-    res.setHeader('Content-Type', 'application/zip');
-    res.setHeader('Content-Disposition', 'attachment; filename="modasr-arz-project.zip"');
-    return res.sendFile(zipPath);
+// ---------------------------------------------------------------------------
+// Security: admin authentication (HTTP Basic) + Telegram webhook verification
+// ---------------------------------------------------------------------------
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || '';
+
+const safeEqual = (a: string, b: string): boolean => {
+  const ha = crypto.createHash('sha256').update(a).digest();
+  const hb = crypto.createHash('sha256').update(b).digest();
+  return crypto.timingSafeEqual(ha, hb);
+};
+
+const WEBHOOK_PATHS = new Set(['/api/telegram/webhook', '/index.php', '/webhook']);
+// Public endpoints needed by the Telegram Mini App (normal users)
+const isPublicRoute = (req: Request): boolean =>
+  (req.method === 'GET' && req.path === '/api/bot/card-preview') ||
+  req.path.startsWith('/api/miniapp/');
+const isAdminApi = (req: Request): boolean =>
+  req.path.startsWith('/api/bot/') ||
+  req.path.startsWith('/api/channel/') ||
+  req.path.startsWith('/api/telegram/');
+
+app.use((req: Request, res: Response, next: NextFunction) => {
+  // Webhook calls: must carry the secret that we gave Telegram in setWebhook
+  if (req.method === 'POST' && WEBHOOK_PATHS.has(req.path)) {
+    const got = String(req.headers['x-telegram-bot-api-secret-token'] || '');
+    if (!got || !safeEqual(got, BOT_CONFIG.webhookSecret)) {
+      return res.status(403).json({ ok: false, error: 'Forbidden' });
+    }
+    return next();
   }
-  return res.status(404).json({ ok: false, error: 'ZIP file not found' });
+
+  if (!isAdminApi(req) || isPublicRoute(req)) return next();
+
+  if (!ADMIN_PASSWORD) {
+    return res.status(503).json({
+      ok: false,
+      error: 'ADMIN_PASSWORD is not set. Add ADMIN_PASSWORD to your .env file and restart.',
+    });
+  }
+
+  const header = req.headers.authorization || '';
+  if (header.startsWith('Basic ')) {
+    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf-8');
+    const password = decoded.slice(decoded.indexOf(':') + 1);
+    if (safeEqual(password, ADMIN_PASSWORD)) return next();
+  }
+  res.setHeader('WWW-Authenticate', 'Basic realm="MODASR Admin Panel", charset="UTF-8"');
+  return res.status(401).json({ ok: false, error: 'Unauthorized' });
 });
 
 // 1. Telegram Webhook Endpoint
@@ -484,7 +524,7 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
       return res.status(400).json({ ok: false, error: 'Text is required' });
     }
 
-    const effectiveFromId = fromId ? parseInt(fromId, 10) : 1355650097;
+    const effectiveFromId = fromId ? parseInt(fromId, 10) : BOT_CONFIG.adminId;
     const effectiveChatId = chatId ? parseInt(chatId, 10) : effectiveFromId;
 
     const fakeUpdate: TelegramUpdate = {
