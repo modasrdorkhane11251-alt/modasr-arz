@@ -401,7 +401,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
 
             <div className="flex items-center gap-2 pt-1 text-xs text-slate-400">
               <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>توکن ربات از فایل <code className="text-cyan-300 font-mono">.env</code> روی سرور خوانده می‌شود</span>
+              <span>توکن فعال در سرور: <code className="text-cyan-300 font-mono">{activeToken ? `${activeToken.substring(0, 10)}...` : 'تنظیم نشده (وارد شده در فایل .env)'}</code></span>
             </div>
           </div>
 
@@ -418,11 +418,11 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
             <div className="space-y-3 text-xs">
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">نام ربات:</span>
-                <span className="font-semibold text-slate-100">{statusData?.botInfo?.result?.first_name || 'Modasr Arzbot'}</span>
+                <span className="font-semibold text-slate-100">{statusData?.botInfo?.result?.first_name || 'ربات تلگرام'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">یوزرنیم:</span>
-                <span className="font-mono text-cyan-400 dir-ltr">@{statusData?.botInfo?.result?.username || 'Modasr_Arzbot'}</span>
+                <span className="font-mono text-cyan-400 dir-ltr">{statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : '@Bot'}</span>
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">شناسه عددی (Bot ID):</span>
@@ -430,7 +430,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               </div>
               <div className="flex justify-between py-1.5 border-b border-slate-800/60">
                 <span className="text-slate-400">شناسه مالک (Admin ID):</span>
-                <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || '—'}</span>
+                <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || 'تعریف نشده'}</span>
               </div>
               <div className="flex justify-between py-1.5">
                 <span className="text-slate-400">وضعیت اتصال:</span>

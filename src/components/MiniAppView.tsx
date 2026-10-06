@@ -1,4 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import { AssetLogo } from './AssetLogo';
+import { MiniAppLogo } from './MiniAppLogo';
 import {
   Home,
   TrendingUp,
@@ -68,8 +70,6 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
   const [selectedCategory, setSelectedCategory] = useState<'all' | 'crypto' | 'gold' | 'fiat' | 'oil' | 'favorites'>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [selectedItem, setSelectedItem] = useState<MiniAppItem | null>(null);
-  const [showQrModal, setShowQrModal] = useState<boolean>(false);
-  const [copiedSecret, setCopiedSecret] = useState<boolean>(false);
   const [favorites, setFavorites] = useState<string[]>(() => {
     try {
       const saved = localStorage.getItem('modasr_favorites');
@@ -99,16 +99,6 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
     }
     return `${origin}/mini-modasr-arz`;
   }, [data]);
-
-  const handleCopySecret = (e?: React.MouseEvent) => {
-    if (e) e.stopPropagation();
-    triggerHaptic();
-    if (typeof navigator !== 'undefined' && navigator.clipboard) {
-      navigator.clipboard.writeText(secretLink);
-      setCopiedSecret(true);
-      setTimeout(() => setCopiedSecret(false), 2500);
-    }
-  };
 
   // Telegram WebApp SDK initialization
   const tgUser = useMemo(() => {
@@ -141,12 +131,12 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
       const res = await fetch('/api/miniapp/data');
       if (res.ok) {
         const json = await res.json();
-        if (json.ok && json.data) {
+        if (json && json.ok && json.data) {
           setData(json.data);
         }
       }
-    } catch (err) {
-      console.error('Failed to load miniapp data:', err);
+    } catch {
+      // Graceful background retry without noisy error logs
     } finally {
       setLoading(false);
       if (isManual) setRefreshing(false);
@@ -155,7 +145,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(() => fetchData(false), 12000);
+    const interval = setInterval(() => fetchData(false), 5000);
     return () => clearInterval(interval);
   }, []);
 
@@ -229,74 +219,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
     return num.toFixed(4);
   };
 
-  // Coin SVG Icon Renderer
+  // Coin & Asset Logo Renderer
   const renderCoinIcon = (symbol: string, category: string, size: number = 36) => {
-    const sym = symbol.toUpperCase();
-    const r = size / 2;
-
-    if (sym === 'BTC') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-amber-600 to-yellow-400 flex items-center justify-center text-white font-black shadow-md shadow-amber-500/20 text-xs">
-          ₿
-        </div>
-      );
-    }
-    if (sym === 'ETH') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-indigo-700 to-blue-500 flex items-center justify-center text-white font-bold shadow-md shadow-indigo-500/20 text-xs">
-          Ξ
-        </div>
-      );
-    }
-    if (sym === 'USDT') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-emerald-600 to-teal-400 flex items-center justify-center text-white font-black shadow-md shadow-emerald-500/20 text-xs">
-          ₮
-        </div>
-      );
-    }
-    if (sym === 'USD') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-emerald-800 to-emerald-500 flex items-center justify-center text-white font-black shadow-md shadow-emerald-600/20 text-xs">
-          $
-        </div>
-      );
-    }
-    if (sym === 'TON') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-sky-600 to-cyan-400 flex items-center justify-center text-white font-black shadow-md shadow-cyan-500/20 text-xs">
-          💎
-        </div>
-      );
-    }
-    if (sym === 'SOL') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-purple-600 to-teal-400 flex items-center justify-center text-white font-black shadow-md shadow-purple-500/20 text-xs">
-          ◎
-        </div>
-      );
-    }
-    if (category === 'gold') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-amber-600 to-yellow-300 flex items-center justify-center text-slate-950 font-black shadow-md shadow-amber-500/30 text-xs">
-          {sym.includes('SEKE') || sym.includes('NIM') || sym.includes('ROB') ? '👑' : '🥇'}
-        </div>
-      );
-    }
-    if (category === 'oil') {
-      return (
-        <div style={{ width: size, height: size }} className="rounded-full bg-gradient-to-tr from-slate-800 to-slate-600 flex items-center justify-center text-sky-400 font-bold shadow-md shadow-sky-500/20 text-xs">
-          🛢️
-        </div>
-      );
-    }
-
-    // Default Avatar
-    return (
-      <div style={{ width: size, height: size }} className="rounded-full bg-slate-800 border border-slate-700 flex items-center justify-center text-cyan-300 font-bold text-[10px]">
-        {sym.substring(0, 3)}
-      </div>
-    );
+    return <AssetLogo symbol={symbol} category={category} size={size} />;
   };
 
   // Sparkline mini SVG curve
@@ -374,55 +299,35 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
       <header className="sticky top-0 z-30 bg-[#070B14]/95 backdrop-blur-xl border-b border-slate-800/80 px-4 pt-3 pb-3">
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
-            <div className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-cyan-500 via-blue-600 to-indigo-600 flex items-center justify-center text-white shadow-lg shadow-cyan-500/25 border border-cyan-400/40 relative">
-              <Sparkles className="w-5 h-5 text-cyan-200" />
+            <div className="relative">
+              <MiniAppLogo logoUrl={(data as any)?.brand?.miniAppLogoUrl} size={40} className="border-amber-500/50 shadow-md shadow-amber-500/20" />
               <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#070B14] animate-ping" />
               <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#070B14]" />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h1 className="text-sm font-black text-white tracking-tight">mini MODASR arz</h1>
+                <h1 className="text-sm font-black text-white tracking-tight">
+                  {(data as any)?.brand?.title || 'mini MODASR arz'}
+                </h1>
                 <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
                   ⚡ شاخص زنده
                 </span>
               </div>
               <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
-                <span>فید زنده بایننس و TGJU</span>
+                <span>{(data as any)?.brand?.subtitle || 'فید زنده بایننس و TGJU'}</span>
                 {tgUser && <span className="text-cyan-400 font-bold">• {tgUser.first_name}</span>}
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5">
-            {/* Secret Link Quick Copy Pill */}
-            <button
-              onClick={handleCopySecret}
-              className="px-2.5 py-1.5 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-700/80 text-[11px] text-slate-300 hover:text-white flex items-center gap-1.5 active:scale-95 transition-all shadow-sm"
-              title="کپی لینک مخفی مینی‌اپ"
-            >
-              {copiedSecret ? <Check className="w-3.5 h-3.5 text-emerald-400" /> : <Lock className="w-3.5 h-3.5 text-amber-400" />}
-              <span className="font-medium text-[10px] hidden sm:inline">{copiedSecret ? 'کپی شد!' : 'لینک مخفی'}</span>
-            </button>
-
-            {/* QR Code Modal Trigger */}
-            <button
-              onClick={() => {
-                triggerHaptic();
-                setShowQrModal(true);
-              }}
-              className="p-2 rounded-xl bg-slate-900/90 hover:bg-slate-800 border border-slate-800 text-slate-300 hover:text-white active:scale-95 transition-all"
-              title="بارکد ورود سریع"
-            >
-              <QrCode className="w-4 h-4 text-cyan-400" />
-            </button>
-
             <button
               onClick={() => {
                 triggerHaptic();
                 fetchData(true);
               }}
-              className="p-2 rounded-xl bg-slate-900 border border-slate-800 text-slate-300 hover:text-white active:scale-95 transition-all"
+              className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-300 hover:text-white active:scale-95 transition-all flex items-center gap-1"
               title="به‌روزرسانی قیمت‌ها"
             >
               <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
@@ -478,31 +383,31 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                   <span>شاخص لحظه‌ای بازارهای مالی</span>
                 </div>
                 <h2 className="text-base font-black text-white tracking-tight">
-                  پیشخوان هوشمند mini MODASR arz
+                  پیشخوان هوشمند {(data as any)?.brand?.title || 'mini MODASR arz'}
                 </h2>
                 <p className="text-[11px] text-slate-300 leading-relaxed max-w-xs">
-                  اتصال آنی به API بایننس، نوبیتکس و صرافی‌های ارزی تهران با نرخ تضمینی زنده
+                  {(data as any)?.brand?.subtitle || 'اتصال آنی به API بایننس، نوبیتکس و صرافی‌های ارزی تهران با نرخ تضمینی زنده'}
                 </p>
               </div>
 
-              <div className="w-12 h-12 rounded-2xl bg-gradient-to-tr from-cyan-600 to-indigo-600 flex items-center justify-center text-white shadow-xl shadow-cyan-600/30 border border-cyan-400/40 flex-shrink-0">
-                <Zap className="w-6 h-6 text-yellow-300" />
+              <div className="flex-shrink-0">
+                <MiniAppLogo
+                  logoUrl={(data as any)?.brand?.miniAppLogoUrl}
+                  size={52}
+                  className="shadow-xl shadow-cyan-500/30 border-amber-500/40"
+                />
               </div>
             </div>
 
-            {/* Secret Link Bar inside Index Hero */}
+            {/* Status Live Feed Indicator inside Index Hero */}
             <div className="mt-3.5 pt-3 border-t border-slate-800/80 flex items-center justify-between gap-2 relative z-10">
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-300 truncate">
-                <Lock className="w-3.5 h-3.5 text-amber-400 flex-shrink-0" />
-                <span className="text-slate-400 font-mono text-[10px] truncate">{secretLink}</span>
+              <div className="flex items-center gap-2 text-[11px] text-slate-300">
+                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping" />
+                <span className="text-slate-300 font-medium text-[11px]">اتصال پایدار • استعلام زنده و بدون تاخیر قیمت‌ها</span>
               </div>
-              <button
-                onClick={handleCopySecret}
-                className="px-2.5 py-1 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 border border-cyan-500/30 text-[10px] font-bold text-cyan-300 flex items-center gap-1 flex-shrink-0 active:scale-95 transition-all"
-              >
-                {copiedSecret ? <Check className="w-3 h-3 text-emerald-400" /> : <Copy className="w-3 h-3 text-cyan-400" />}
-                <span>{copiedSecret ? 'کپی شد' : 'کپی لینک مخفی'}</span>
-              </button>
+              <div className="flex items-center gap-1.5 text-[10px] text-cyan-400 font-mono">
+                <span>100% Live Sync</span>
+              </div>
             </div>
           </div>
 
@@ -725,7 +630,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-cyan-500/30 flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all"
                     >
                       <div className="flex items-center gap-2.5">
-                        {renderCoinIcon(item.symbol, item.category, 32)}
+                        {renderCoinIcon(item.key || item.symbol, item.category, 32)}
                         <div>
                           <div className="flex items-center gap-1.5">
                             <span className="font-bold text-xs text-white">{item.persianName}</span>
@@ -787,49 +692,36 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
             </button>
           </div>
 
-          {/* Secret Link VIP Information Box */}
-          <div className="p-4 rounded-3xl bg-slate-900/90 border border-slate-800 space-y-3 shadow-xl">
-            <div className="flex items-center gap-2">
-              <div className="p-2 rounded-xl bg-amber-500/20 text-amber-400">
-                <Lock className="w-4 h-4" />
-              </div>
-              <div>
-                <h3 className="text-xs font-bold text-white">لینک مخفی و اختصاصی mini MODASR arz</h3>
-                <p className="text-[10px] text-slate-400">دسترسی بدون فیلتر و مستقیم در تلگرام و مرورگر</p>
+          {/* Official Channel & Telegram Bot Card */}
+          <div className="p-4 rounded-3xl bg-gradient-to-r from-slate-900 via-[#0E1621] to-slate-950 border border-slate-800 space-y-3 shadow-xl">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-2.5">
+                <MiniAppLogo logoUrl={(data as any)?.brand?.miniAppLogoUrl} size={40} className="shadow-md shadow-cyan-600/20" />
+                <div>
+                  <h3 className="text-xs font-bold text-white">کانال رسمی @MODASR_ARZ</h3>
+                  <p className="text-[10px] text-slate-400">تحلیل‌ها، گزارش‌های لحظه‌ای و اخبار بازار</p>
+                </div>
               </div>
             </div>
 
-            <div className="p-2.5 rounded-2xl bg-slate-950 border border-slate-800 flex items-center justify-between text-xs text-slate-300 font-mono select-all">
-              <span className="truncate text-cyan-300 text-[11px]">{secretLink}</span>
-              <button
-                onClick={handleCopySecret}
-                className="p-1.5 hover:text-white text-slate-400 rounded-lg active:scale-90"
-              >
-                {copiedSecret ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-cyan-400" />}
-              </button>
-            </div>
-
-            <div className="flex items-center gap-2">
-              <a
-                href={`tg://resolve?domain=Modasr_Arzbot&start=miniapp`}
-                onClick={() => {
-                  setTimeout(() => {
-                    window.location.href = 'https://t.me/Modasr_Arzbot?start=miniapp';
-                  }, 500);
-                }}
-                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
-              >
-                <Send className="w-3.5 h-3.5" />
-                <span>ورود در تلگرام</span>
-              </a>
-
+            <div className="flex items-center gap-2 pt-1">
               <a
                 href="https://t.me/MODASR_ARZ"
                 target="_blank"
                 rel="noreferrer"
+                className="flex-1 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-[11px] flex items-center justify-center gap-1.5 shadow-md active:scale-95 transition-all"
+              >
+                <Send className="w-3.5 h-3.5" />
+                <span>عضویت در کانال</span>
+              </a>
+
+              <a
+                href="https://t.me/Modasr_Arzbot?start=start"
+                target="_blank"
+                rel="noreferrer"
                 className="flex-1 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 font-bold text-[11px] flex items-center justify-center gap-1.5 border border-slate-700 active:scale-95 transition-all"
               >
-                <span>کانال @MODASR_ARZ</span>
+                <span>ربات تلگرام</span>
               </a>
             </div>
           </div>
@@ -865,7 +757,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       className="min-w-[136px] flex-shrink-0 snap-start rounded-2xl p-3 bg-gradient-to-b from-slate-900/90 to-slate-950/80 border border-slate-800 hover:border-cyan-500/40 cursor-pointer active:scale-95 transition-all shadow-lg"
                     >
                       <div className="flex items-center justify-between mb-2">
-                        {renderCoinIcon(item.symbol, item.category, 28)}
+                        {renderCoinIcon(item.key || item.symbol, item.category, 28)}
                         <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg ${
                           isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
                         }`}>
@@ -945,7 +837,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                   >
                     {/* Left Icon & Names */}
                     <div className="flex items-center gap-2.5 min-w-0">
-                      {renderCoinIcon(item.symbol, item.category, 36)}
+                      {renderCoinIcon(item.key || item.symbol, item.category, 36)}
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
                           <span className="font-bold text-xs text-white truncate">{item.persianName}</span>
@@ -1103,7 +995,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                     className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between cursor-pointer active:scale-95 transition-all shadow-md"
                   >
                     <div className="flex items-center gap-2.5">
-                      {renderCoinIcon(item.symbol, item.category, 36)}
+                      {renderCoinIcon(item.key || item.symbol, item.category, 36)}
                       <div>
                         <div className="font-bold text-xs text-white">{item.persianName}</div>
                         <div className="text-[10px] font-mono text-slate-400">{item.symbol}</div>
@@ -1143,7 +1035,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
             {/* Modal Header */}
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2.5">
-                {renderCoinIcon(selectedItem.symbol, selectedItem.category, 42)}
+                {renderCoinIcon(selectedItem.key || selectedItem.symbol, selectedItem.category, 42)}
                 <div>
                   <div className="flex items-center gap-1.5">
                     <h3 className="font-black text-sm text-white">{selectedItem.persianName}</h3>
@@ -1329,66 +1221,6 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
 
         </div>
       </nav>
-
-      {/* 7. QR CODE MODAL FOR SECRET LINK */}
-      {showQrModal && (
-        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-center justify-center p-4 animate-fadeIn">
-          <div className="bg-slate-900 border border-slate-800 rounded-3xl p-5 max-w-xs w-full text-center space-y-4 shadow-2xl relative">
-            <button
-              onClick={() => setShowQrModal(false)}
-              className="absolute top-4 left-4 p-1.5 rounded-full bg-slate-800 text-slate-400 hover:text-white"
-            >
-              <X className="w-4 h-4" />
-            </button>
-
-            <div className="space-y-1">
-              <div className="w-10 h-10 rounded-2xl bg-cyan-600/20 text-cyan-400 border border-cyan-500/30 flex items-center justify-center mx-auto">
-                <QrCode className="w-5 h-5" />
-              </div>
-              <h3 className="text-sm font-black text-white">بارکد لینک مخفی mini MODASR arz</h3>
-              <p className="text-[11px] text-slate-400">با دوربین گوشی اسکن کنید تا مستقیماً وارد مینی‌اپ شوید</p>
-            </div>
-
-            {/* High Contrast Clean QR SVG */}
-            <div className="p-3 bg-white rounded-2xl mx-auto w-44 h-44 flex items-center justify-center shadow-lg">
-              <svg viewBox="0 0 100 100" className="w-full h-full text-slate-950">
-                <rect x="5" y="5" width="28" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="6" />
-                <rect x="13" y="13" width="12" height="12" fill="currentColor" />
-                <rect x="67" y="5" width="28" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="6" />
-                <rect x="75" y="13" width="12" height="12" fill="currentColor" />
-                <rect x="5" y="67" width="28" height="28" rx="4" fill="none" stroke="currentColor" strokeWidth="6" />
-                <rect x="13" y="75" width="12" height="12" fill="currentColor" />
-                <rect x="42" y="10" width="8" height="8" fill="currentColor" />
-                <rect x="52" y="20" width="8" height="8" fill="currentColor" />
-                <rect x="42" y="32" width="16" height="6" fill="currentColor" />
-                <rect x="10" y="42" width="8" height="16" fill="currentColor" />
-                <rect x="25" y="48" width="10" height="8" fill="currentColor" />
-                <rect x="44" y="44" width="12" height="12" rx="3" fill="#0284C7" />
-                <rect x="65" y="42" width="8" height="16" fill="currentColor" />
-                <rect x="80" y="52" width="12" height="6" fill="currentColor" />
-                <rect x="42" y="66" width="10" height="8" fill="currentColor" />
-                <rect x="60" y="70" width="12" height="8" fill="currentColor" />
-                <rect x="78" y="78" width="12" height="12" fill="currentColor" />
-                <rect x="44" y="82" width="14" height="8" fill="currentColor" />
-              </svg>
-            </div>
-
-            <div className="space-y-2">
-              <div className="p-2 rounded-xl bg-slate-950 border border-slate-800 text-[10px] font-mono text-cyan-300 truncate">
-                {secretLink}
-              </div>
-
-              <button
-                onClick={handleCopySecret}
-                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white font-bold text-xs flex items-center justify-center gap-1.5 active:scale-95 transition-all shadow-md"
-              >
-                {copiedSecret ? <Check className="w-4 h-4 text-emerald-300" /> : <Copy className="w-4 h-4" />}
-                <span>{copiedSecret ? 'لینک کپی شد!' : 'کپی لینک مخفی'}</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
 
     </div>
   );

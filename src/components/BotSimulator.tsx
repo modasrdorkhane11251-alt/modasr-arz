@@ -215,7 +215,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({ onSimulateMessage })
               title="تغییر نقش به مالک ربات برای تست دستور /admin"
             >
               <Shield className="w-3.5 h-3.5" />
-              <span>{isAdminMode ? 'حالت: ادمین' : 'حالت: کاربر عادی'}</span>
+              <span>{isAdminMode ? 'حالت: ادمین (مدیر ربات)' : 'حالت: کاربر عادی'}</span>
             </button>
 
             <button
@@ -377,7 +377,7 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({ onSimulateMessage })
           <ul className="space-y-1.5 text-[11px] text-slate-400 list-disc list-inside leading-relaxed">
             <li><strong className="text-slate-200">فقط نام ارز:</strong> مانند <code className="text-cyan-400">بیت کوین</code> یا <code className="text-cyan-400">تتر</code> (معادل ۱ واحد)</li>
             <li><strong className="text-slate-200">تعداد + نام:</strong> مانند <code className="text-cyan-400">0.5 اتریوم</code> یا <code className="text-cyan-400">2.5 طلا</code></li>
-            <li><strong className="text-slate-200">دستور ادمین:</strong> <code className="text-cyan-400">/admin</code> (فقط با آیدی ادمین)</li>
+            <li><strong className="text-slate-200">دستور ادمین:</strong> <code className="text-cyan-400">/admin</code> (ویژه شناسه عددی ادمین تعریف‌شده در .env)</li>
             <li><strong className="text-slate-200">اعداد فارسی:</strong> ربات ارقام فارسی مانند <code className="text-cyan-400">۱.۵ طلا</code> را نیز پشتیبانی می‌کند.</li>
           </ul>
         </div>

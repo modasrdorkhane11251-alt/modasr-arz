@@ -1,5 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { RefreshCw, Search, TrendingUp, TrendingDown, Coins, Sparkles } from 'lucide-react';
+import React, { useState } from 'react';
+import { RefreshCw, Search, TrendingUp, TrendingDown } from 'lucide-react';
+import { AssetLogo } from './AssetLogo';
 
 interface PriceBoardProps {
   pricesData: any;
@@ -9,31 +10,88 @@ interface PriceBoardProps {
 
 export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPrices, loading }) => {
   const [search, setSearch] = useState('');
-  const [calcAmount, setCalcAmount] = useState<number>(1);
-  const [selectedCurrency, setSelectedCurrency] = useState<string>('btc');
 
   const coins = pricesData?.coins || {};
-  const goldPriceToman = pricesData?.goldPriceToman || 4850000;
+  const goldPriceToman = pricesData?.goldPriceToman || 26755400;
 
-  // Filter unique coins
-  const uniqueCoinsList = Object.entries(coins)
-    .filter(([key, val]: any) => {
-      if (!val || typeof val !== 'object') return false;
-      // Filter duplicate uppercase keys
-      return key === key.toLowerCase() && key.length <= 10;
-    })
-    .map(([key, val]: any) => ({
-      key,
-      name: val.name || key.toUpperCase(),
-      usdt: Number(val.usdt) || 0,
-      toman: Number(val.irr) || 0,
-      change: Number(val.dayChange) || 0,
-    }))
-    .filter((c) => {
+  // Deduplicate and filter unique coins by canonical symbol
+  const uniqueCoinsList = React.useMemo(() => {
+    const map = new Map<string, any>();
+    
+    // Priority order for prominent crypto assets
+    const priorityOrder = ['BTC', 'ETH', 'USDT', 'TON', 'SOL', 'BNB', 'TRX', 'DOGE', 'XRP', 'ADA', 'SHIB', 'PEPE', 'NOT', 'LTC', 'BCH', 'AVAX', 'LINK', 'SUI', 'NEAR', 'POL', 'DOT'];
+
+    const persianNames: Record<string, string> = {
+      BTC: 'بیت کوین',
+      ETH: 'اتریوم',
+      USDT: 'تتر دیجیتال',
+      USD: 'دلار آمریکا',
+      TON: 'تون کوین',
+      SOL: 'سولانا',
+      BNB: 'بایننس کوین',
+      TRX: 'ترون',
+      DOGE: 'دوج کوین',
+      XRP: 'ریپل',
+      ADA: 'کاردانو',
+      SHIB: 'شیبا اینو',
+      PEPE: 'پپه',
+      NOT: 'نات کوین',
+      LTC: 'لایت کوین',
+      BCH: 'بیت کوین کش',
+      AVAX: 'اولنچ',
+      LINK: 'چین لینک',
+      SUI: 'سویی',
+      NEAR: 'نیر پروتکل',
+      POL: 'پالیگان',
+      MATIC: 'پالیگان',
+      DOT: 'پولکادات',
+    };
+
+    Object.entries(coins).forEach(([rawKey, val]: [string, any]) => {
+      if (!val || typeof val !== 'object') return;
+      const key = rawKey.trim();
+
+      // Skip non-ASCII keys (e.g. Persian names 'تتر', 'بیت کوین')
+      if (!/^[a-zA-Z0-9_-]+$/.test(key)) return;
+
+      // Skip redundant long alias keys
+      const lower = key.toLowerCase();
+      if (lower === 'tether' || lower === 'bitcoin' || lower === 'ethereum' || lower === 'dollar' || lower === 'toncoin') return;
+
+      const symbol = (val.symbol || key).toUpperCase();
+      if (!symbol || symbol.length > 8) return;
+
+      // Deduplicate by upper symbol
+      if (!map.has(symbol)) {
+        map.set(symbol, {
+          key: symbol.toLowerCase(),
+          symbol,
+          name: persianNames[symbol] || val.name || symbol,
+          usdt: Number(val.usdt) || 0,
+          toman: Number(val.irr) || 0,
+          change: Number(val.dayChange) || 0,
+        });
+      }
+    });
+
+    const list = Array.from(map.values());
+
+    // Sort by priority order
+    list.sort((a, b) => {
+      const idxA = priorityOrder.indexOf(a.symbol);
+      const idxB = priorityOrder.indexOf(b.symbol);
+      if (idxA !== -1 && idxB !== -1) return idxA - idxB;
+      if (idxA !== -1) return -1;
+      if (idxB !== -1) return 1;
+      return (b.toman || 0) - (a.toman || 0);
+    });
+
+    return list.filter((c) => {
       const q = search.trim().toLowerCase();
       if (!q) return true;
-      return c.key.includes(q) || c.name.toLowerCase().includes(q);
+      return c.symbol.toLowerCase().includes(q) || c.name.toLowerCase().includes(q) || c.key.includes(q);
     });
+  }, [coins, search]);
 
   return (
     <div className="space-y-6">
@@ -44,9 +102,7 @@ export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPri
         <div className="bg-gradient-to-br from-amber-500/10 via-amber-950/20 to-slate-900 border border-amber-500/30 rounded-2xl p-5 shadow-xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-amber-500/20 border border-amber-500/30 flex items-center justify-center text-amber-400">
-                <Sparkles className="w-5 h-5" />
-              </div>
+              <AssetLogo symbol="GOLD18" category="gold" size={44} />
               <div>
                 <span className="text-xs text-amber-300 font-medium">نرخ لحظه‌ای طلا</span>
                 <h3 className="text-sm font-bold text-white">طلای ۱۸ عیار</h3>
@@ -72,9 +128,7 @@ export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPri
         <div className="bg-gradient-to-br from-sky-500/10 via-slate-900 to-slate-950 border border-sky-500/30 rounded-2xl p-5 shadow-xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 text-lg">
-                🛢️
-              </div>
+              <AssetLogo symbol="BRENT" category="oil" size={44} />
               <div>
                 <span className="text-xs text-sky-300 font-medium">بازار جهانی انرژی</span>
                 <h3 className="text-sm font-bold text-white">نفت برنت (Brent Oil)</h3>
@@ -102,9 +156,7 @@ export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPri
         <div className="bg-gradient-to-br from-emerald-500/10 via-emerald-950/20 to-slate-900 border border-emerald-500/30 rounded-2xl p-5 shadow-xl">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-2xl bg-emerald-500/20 border border-emerald-500/30 flex items-center justify-center text-emerald-400 font-bold font-mono text-lg">
-                ₮
-              </div>
+              <AssetLogo symbol="USDT" category="crypto" size={44} />
               <div>
                 <span className="text-xs text-emerald-300 font-medium">نرخ دلار دیجیتال</span>
                 <h3 className="text-sm font-bold text-white">تتر (USDT / IRR)</h3>
@@ -118,7 +170,7 @@ export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPri
           <div className="mt-4 pt-3 border-t border-emerald-500/20 flex items-baseline justify-between">
             <div>
               <span className="text-xl font-black text-emerald-400 font-mono">
-                {Math.round(coins['tether']?.irr || coins['usdt']?.irr || 268800).toLocaleString('fa-IR')}
+                {Math.round(coins['tether']?.irr || coins['usdt']?.irr || 268465).toLocaleString('fa-IR')}
               </span>
               <span className="text-xs text-slate-300 mr-1.5">تومان</span>
             </div>
@@ -165,11 +217,14 @@ export const PriceBoard: React.FC<PriceBoardProps> = ({ pricesData, onRefreshPri
               className="bg-slate-900/80 hover:bg-slate-850 border border-slate-800 hover:border-slate-700 rounded-2xl p-4 transition-all shadow-lg hover:shadow-cyan-500/5 group"
             >
               <div className="flex items-center justify-between">
-                <div>
-                  <h4 className="font-bold text-sm text-white group-hover:text-cyan-400 transition-colors uppercase font-mono">
-                    {coin.key}
-                  </h4>
-                  <p className="text-[11px] text-slate-400 truncate max-w-[120px]">{coin.name}</p>
+                <div className="flex items-center gap-2.5">
+                  <AssetLogo symbol={coin.symbol} category="crypto" size={34} />
+                  <div>
+                    <h4 className="font-bold text-sm text-white group-hover:text-cyan-400 transition-colors uppercase font-mono">
+                      {coin.symbol}
+                    </h4>
+                    <p className="text-[11px] text-slate-400 truncate max-w-[110px]">{coin.name}</p>
+                  </div>
                 </div>
 
                 <div
