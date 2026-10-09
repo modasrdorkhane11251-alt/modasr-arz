@@ -8,13 +8,15 @@ import { MANUAL_ALIASES } from './config';
 // Data sources & units:
 //   - FastCreat Nobitex  → crypto + tether   (irr = TOMAN, usdt = USD)
 //   - TGJU               → dollar + gold      (p = RIAL → divide by 10)
-//   - Binance            → fallback for missing crypto (USD)
+//   - Binance 24hr       → fallback for missing crypto (USD + change %)
 //
 // Design principles:
 //   1. USD (free-market) and USDT (tether) are INDEPENDENT
 //   2. No hardcoded fallback is presented as a live price
 //   3. Provider errors are logged; health is tracked
 //   4. Stale data is explicitly marked
+//   5. All change percentages come from real provider data
+//   6. ALL cryptos returned by providers are surfaced to the Mini App
 // ============================================================================
 
 const RIALS_PER_TOMAN = 10;
@@ -23,6 +25,50 @@ const LIVE_TICKER_INTERVAL_MS = 15_000;
 const FETCH_TIMEOUT_MS = 4_000;
 const STALE_THRESHOLD_MS = 5 * 60_000;
 const TGJU_URL = 'https://call.tgju.org/ajax.json';
+
+// Persian display names for common cryptos (used in Mini App)
+const PERSIAN_NAMES: Record<string, string> = {
+  BTC: 'بیت کوین', ETH: 'اتریوم', USDT: 'تتر دیجیتال', TON: 'تون کوین',
+  SOL: 'سولانا', BNB: 'بایننس کوین', TRX: 'ترون', DOGE: 'دوج کوین',
+  XRP: 'ریپل', ADA: 'کاردانو', SHIB: 'شیبا اینو', PEPE: 'پپه',
+  NOT: 'نات کوین', LTC: 'لایت کوین', BCH: 'بیت کوین کش', AVAX: 'اولنچ',
+  LINK: 'چین لینک', SUI: 'سویی', NEAR: 'نیر پروتکل', DOT: 'پولکادات',
+  MATIC: 'پالیگان', POL: 'پالیگان', UNI: 'یونی‌سواپ', ATOM: 'کازموس',
+  XLM: 'استلار', ALGO: 'الگورند', VET: 'وی‌چین', FIL: 'فایل‌کوین',
+  ETC: 'اتریوم کلاسیک', XMR: 'مونرو', AAVE: 'آوه', MKR: 'میکر',
+  COMP: 'کامپاند', SNX: 'سینتتیکس', CRV: 'کرو', SUSHI: 'سوشی',
+  YFI: 'یرن فایننس', '1INCH': 'وان اینچ', ENS: 'اتریوم نیم سرویس',
+  GRT: 'گراف', BAT: 'بت', MANA: 'دیسنترالند', SAND: 'سندباکس',
+  AXS: 'اکسی', GALA: 'گالا', CHZ: 'چیلیز', ENJ: 'انجین کوین',
+  HBAR: 'هدرا', ONE: 'هارمونی', LRC: 'لوپرینگ', STORJ: 'استورج',
+  ZRX: 'زیرو ایکس', BAL: 'بالانسر', ROSE: 'اوآسیس', KSM: 'کوساما',
+  ZEC: 'زی‌کش', DASH: 'دش', EOS: 'ای او اس', NEO: 'نئو',
+  IOTA: 'آیوتا', QTUM: 'کیوتام', WAVES: 'ویوز', ICX: 'آیکون',
+  ARB: 'اربیتروم', OP: 'اپتیمیزم', APT: 'آپتوس', TIA: 'سلستیا',
+  SEI: 'سی', SUI2: 'سویی', INJ: 'اینجکتیو', IMX: 'ایموتبل ایکس',
+  LDO: 'لیدو', RPL: 'راکت پول', PENDLE: 'پندل', ONDO: 'اوندو',
+  JUP: 'جوپیتر', PYTH: 'پایت', WIF: 'داگ ویف', BONK: 'بونک',
+  FLOKI: 'فلوکی', MEME: 'میم', BOME: 'بوک آو میم',
+  WLD: 'ورلد کوین', FET: 'فچ ای آی', AGIX: 'سینگولاریتی',
+  RNDR: 'رندر', RENDER: 'رندر نتورک', FTM: 'فانتوم', S: 'سونیک',
+  KAS: 'کاسپا', ICP: 'اینترنت کامپیوتر', THETA: 'تتا',
+  FLOW: 'فلو', CFX: 'کانفلاکس', KAVA: 'کاوا', ROSE2: 'اوآسیس',
+  GMT: 'استپن', APE: 'ایپ کوین', GALA2: 'گالا',
+  HMSTR: 'همستر کمبات', DOGS: 'داگز', CATI: 'کتیزن', MAJOR: 'ماژور',
+  T: 'ترشولد', CELR: 'سلر نتورک', MAGIC: 'مجیک', GMX: 'جی ام ایکس',
+  BAND: 'بند', CVX: 'کانوکس', SSV: 'اس اس وی', MDT: 'مرژبل دیتا',
+  OMG: 'او ام جی', RDNT: 'رادیانت', JST: 'جاست', BICO: 'بیکو',
+  WOO: 'وو نتورک', SKL: 'اسکیل', GAL: 'گلکس',
+  USDC: 'یو اس دی کوین', DAI: 'دای', TUSD: 'تیواس‌دی', BUSD: 'بی‌یواس‌دی',
+  FDUSD: 'اف‌دی‌یو‌اس‌دی', PYUSD: 'پی‌یو‌اس‌دی',
+  WBTC: 'رپد بیت کوین', WETH: 'رپد اتریوم', STETH: 'استیک اتریوم',
+  BTCB: 'بیت کوین بایننس',
+  QNT: 'کوانت', MASK: 'مسک', DYDX: 'دی وای دی ایکس',
+  LPT: 'لایوپیر', API3: 'ای پی آی ۳', GLM: 'گولم',
+  DAO: 'دائو میکر', CVC: 'سیویک', NMR: 'نومریر',
+  SNT: 'استاتوس', ANT: 'آراگون', SLP: 'اسموث لاو',
+  EGLD: 'مولتی ورس', BLUR: 'بلر',
+};
 
 // ============================================================================
 // PUBLIC INTERFACES
@@ -311,9 +357,6 @@ export class PriceService {
     const goldUrl = hubConfig?.priceBoard?.goldApiUrl || '';
     const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
 
-    // ---- Fetch all providers in parallel ----
-    // TGJU is the primary source for dollar + gold (Rials)
-    // FastCreat is the source for crypto + tether (Toman)
     const [goldRes, cryptoRes, tgjuRes] = await Promise.all([
       goldUrl ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
       cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
@@ -328,28 +371,23 @@ export class PriceService {
     if (!cryptoRes.data) errors.push(`crypto: ${cryptoRes.error}`);
     if (!tgjuRes.data) errors.push(`tgju: ${tgjuRes.error}`);
 
-    // ---- Extract ----
     const tetherData = this.extractTether(cryptoRes.data);
     if (!tetherData.isLive) unavailable.push('usdt');
 
-    // Dollar comes from TGJU (independent from tether)
     const dollarData = this.extractDollar(tgjuRes.data);
     if (!dollarData.isLive) unavailable.push('usd');
 
-    // Gold comes from TGJU (primary) with FastCreat as fallback inside extractor
     const goldBundle = this.extractGold(tgjuRes.data, goldRes.data);
     if (!goldBundle.gold18.isLive) unavailable.push('gold18');
     if (!goldBundle.sekeEmami.isLive) unavailable.push('sekeEmami');
 
     const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
 
-    // Binance fallback for missing cryptos
     await this.enrichFromBinance(coins, tetherData.toman);
 
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
     const oil = this.extractOil(tgjuRes.data);
 
-    // ---- Build snapshot ----
     const nowIso = new Date().toISOString();
     let persianTime = nowIso;
     try {
@@ -431,17 +469,12 @@ export class PriceService {
   // EXTRACTORS
   // ==========================================================================
 
-  /**
-   * Tether (USDT) from FastCreat Nobitex.
-   * FastCreat's `irr` field is ALREADY in Toman (verified from legacy PHP).
-   */
   private static extractTether(cryptoData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
     const result = cryptoData?.result;
 
-    // FastCreat: { result: { USDT: { irr: 267999, usdt: 1, dayChange: 1.2 } } }
     const usdt = result?.USDT || result?.usdt;
     if (usdt?.irr) {
       const pToman = parseFloat(String(usdt.irr));
@@ -458,7 +491,6 @@ export class PriceService {
       }
     }
 
-    // Fallback: Nobitex raw stats (Rials → divide by 10)
     const stats = cryptoData?.stats;
     if (stats?.['usdt-rls']?.latest) {
       const pRials = parseFloat(stats['usdt-rls'].latest);
@@ -476,11 +508,6 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
-  /**
-   * Dollar (USD/IRR free-market) from TGJU.
-   * TGJU `p` values are RIAL → divide by 10.
-   * Field: price_dollar_rl (free-market dollar)
-   */
   private static extractDollar(tgjuData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
@@ -507,10 +534,6 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
-  /**
-   * Gold & coins — primary from TGJU, fallback from FastCreat.
-   * Both sources store values in RIAL.
-   */
   private static extractGold(tgjuData: any, fastcreatData: any): {
     gold18: GoldExtract; gold24: GoldExtract; mesghal: GoldExtract;
     sekeEmami: GoldExtract; sekeBahar: GoldExtract; sekeNim: GoldExtract;
@@ -529,7 +552,6 @@ export class PriceService {
     const silv = empty('نقره ۹۹۹');
     const ons  = empty('انس جهانی طلا');
 
-    // ---------- 1. TGJU (primary, values in RIAL) ----------
     const current = tgjuData?.current || tgjuData?.data?.current;
     if (current) {
       const tg = (key: string, target: GoldExtract) => {
@@ -542,7 +564,6 @@ export class PriceService {
         if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
       };
 
-      // TGJU field names
       tg('geram18', g18);
       tg('geram24', g24);
       tg('mesghal', mes);
@@ -553,7 +574,6 @@ export class PriceService {
       tg('gerami', skG);
       tg('silver', silv);
 
-      // ONS is in USD on TGJU (different unit)
       const onsField = current['ons'];
       if (onsField?.p) {
         const usdPrice = this.parseNumberFromRaw(onsField.p);
@@ -564,11 +584,10 @@ export class PriceService {
       }
     }
 
-    // ---------- 2. FastCreat (fallback for anything still missing) ----------
     const arr = fastcreatData?.result;
     if (Array.isArray(arr)) {
-      const trySet = (target: GoldExtract, title: string, pRials: number, highR: number, lowR: number, ch: number) => {
-        if (target.isLive) return; // don't overwrite TGJU data
+      const trySet = (target: GoldExtract, pRials: number, highR: number, lowR: number, ch: number) => {
+        if (target.isLive) return;
         const pToman = Math.round(pRials / RIALS_PER_TOMAN);
         const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
         const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
@@ -586,23 +605,23 @@ export class PriceService {
         const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
 
         if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(Math.round(pRials / RIALS_PER_TOMAN))) {
-          trySet(g18, title, pRials, highR, lowR, ch);
+          trySet(g18, pRials, highR, lowR, ch);
         } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
-          trySet(g24, title, pRials, highR, lowR, ch);
+          trySet(g24, pRials, highR, lowR, ch);
         } else if (title.includes('مثقال')) {
-          trySet(mes, title, pRials, highR, lowR, ch);
+          trySet(mes, pRials, highR, lowR, ch);
         } else if (title.includes('امامی')) {
-          trySet(skE, title, pRials, highR, lowR, ch);
+          trySet(skE, pRials, highR, lowR, ch);
         } else if (title.includes('بهار')) {
-          trySet(skB, title, pRials, highR, lowR, ch);
+          trySet(skB, pRials, highR, lowR, ch);
         } else if (title.includes('نیم')) {
-          trySet(skN, title, pRials, highR, lowR, ch);
+          trySet(skN, pRials, highR, lowR, ch);
         } else if (title.includes('ربع')) {
-          trySet(skR, title, pRials, highR, lowR, ch);
+          trySet(skR, pRials, highR, lowR, ch);
         } else if (title.includes('گرمی')) {
-          trySet(skG, title, pRials, highR, lowR, ch);
+          trySet(skG, pRials, highR, lowR, ch);
         } else if (title.includes('نقره')) {
-          trySet(silv, title, pRials, highR, lowR, ch);
+          trySet(silv, pRials, highR, lowR, ch);
         }
       }
     }
@@ -614,10 +633,6 @@ export class PriceService {
     };
   }
 
-  /**
-   * Coins from FastCreat Nobitex.
-   * FastCreat `irr` is TOMAN (verified from legacy PHP code).
-   */
   private static extractCoins(
     cryptoData: any,
     tetherToman: number
@@ -659,7 +674,6 @@ export class PriceService {
       }
     }
 
-    // Tether itself
     if (tetherToman > 0) {
       const usdt: CoinInfo = {
         name: 'تتر دیجیتال', symbol: 'USDT',
@@ -671,7 +685,6 @@ export class PriceService {
       coins['USDT'] = usdt;
     }
 
-    // Manual aliases
     for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
       const std = standard.toLowerCase();
       if (coins[std]) coins[alias.toLowerCase()] = coins[std];
@@ -681,42 +694,73 @@ export class PriceService {
   }
 
   /**
-   * Binance fallback for cryptos that FastCreat didn't return.
+   * Binance 24hr fallback — provides price + real 24h change.
+   * Called for coins that FastCreat didn't return or returned with 0 price.
    */
   private static async enrichFromBinance(
     coins: Record<string, CoinInfo>,
     tetherToman: number
   ): Promise<void> {
-    const wanted = ['btc', 'eth', 'sol', 'ton', 'doge', 'xrp', 'bnb', 'ltc', 'trx', 'ada', 'shib', 'avax', 'link', 'near', 'not', 'pepe', 'sui'];
-    const missing = wanted.filter((k) => !coins[k] || coins[k].unavailable || coins[k].irr === 0);
+    // Coins we always want to have (even if FastCreat didn't include them)
+    const wanted = [
+      'btc', 'eth', 'sol', 'ton', 'doge', 'xrp', 'bnb', 'ltc', 'trx',
+      'ada', 'shib', 'avax', 'link', 'near', 'not', 'pepe', 'sui',
+      'dot', 'uni', 'atom', 'etc', 'xmr', 'aave', 'mkr', 'arb', 'op',
+      'apt', 'tia', 'sei', 'inj', 'wld', 'fet', 'rndr', 'render',
+      'fil', 'algo', 'xlm', 'vet', 'hbar', 'egld', 'ksm', 'zec',
+      'dash', 'eos', 'neo', 'iota', 'qtum', 'waves', 'icx', 'theta',
+      'flow', 'cfx', 'kava', 'gmt', 'ape', 'qnt', 'mask', 'dydx',
+      'lpt', 'api3', 'glm', 'storj', 'zrx', 'bal', 'rose', 'crv',
+      'sushi', 'yfi', '1inch', 'ens', 'grt', 'bat', 'mana', 'sand',
+      'axs', 'gala', 'chz', 'enj', 'lrc', 'snx', 'comp', 'usdc', 'dai',
+      'tusd', 'busd', 'fdusd', 'wbtc', 'steth', 'blur', 'ldo',
+      'pendle', 'ondo', 'jup', 'pyth', 'wif', 'bonk', 'floki', 'bome',
+      'kas', 'hmstr', 'dogs', 'cati', 'major',
+    ];
+
+    const missing = wanted.filter((k) => {
+      const c = coins[k] || coins[k.toUpperCase()];
+      return !c || c.unavailable || (c.irr === 0 && c.usdt === 0);
+    });
 
     if (missing.length === 0) return;
 
+    console.log(`[PriceService] Binance fallback: fetching ${missing.length} missing cryptos`);
+
     const fetches = missing.map(async (sym) => {
-      const url = `https://api.binance.com/api/v3/ticker/price?symbol=${sym.toUpperCase()}USDT`;
-      const r = await this.fetchJson(url, 3000);
-      const priceStr = r.data?.price;
-      const price = priceStr ? parseFloat(String(priceStr)) : NaN;
-      return { sym, price: Number.isFinite(price) ? price : null };
+      const url = `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym.toUpperCase()}USDT`;
+      const r = await this.fetchJson(url, 4_000);
+      const d = r.data;
+      if (!d) return { sym, price: null as number | null, change: 0 };
+      const price = parseFloat(String(d.lastPrice || '0'));
+      const change = parseFloat(String(d.priceChangePercent || '0'));
+      return {
+        sym,
+        price: Number.isFinite(price) && price > 0 ? price : null,
+        change: Number.isFinite(change) ? change : 0,
+      };
     });
 
     const results = await Promise.all(fetches);
 
-    for (const { sym, price } of results) {
+    for (const { sym, price, change } of results) {
       if (!price || price <= 0) continue;
       const toman = tetherToman > 0 ? Math.round(price * tetherToman) : 0;
       const coin: CoinInfo = {
-        name: sym.toUpperCase(),
+        name: PERSIAN_NAMES[sym.toUpperCase()] || sym.toUpperCase(),
         symbol: sym.toUpperCase(),
         usdt: price,
         irr: toman,
-        dayChange: 0,
+        dayChange: change,
         source: 'binance',
         isDerived: true,
       };
       coins[sym] = coin;
       coins[sym.toLowerCase()] = coin;
     }
+
+    const filled = results.filter((r) => r.price).length;
+    console.log(`[PriceService] Binance 24hr fallback filled ${filled}/${missing.length} missing cryptos`);
   }
 
   private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
@@ -783,6 +827,44 @@ export class PriceService {
     return out;
   }
 
+  /**
+   * Deduplicate the coins map into a clean list, keeping the highest-priority entry for each symbol.
+   * Priority: BTC, ETH, USDT, TON, SOL, BNB, ... first; then the rest sorted by USD price desc.
+   */
+  private static dedupeCoins(coins: Record<string, CoinInfo>): CoinInfo[] {
+    const priority = [
+      'BTC', 'ETH', 'USDT', 'TON', 'SOL', 'BNB', 'TRX', 'DOGE', 'XRP',
+      'ADA', 'SHIB', 'PEPE', 'NOT', 'LTC', 'BCH', 'AVAX', 'LINK', 'SUI', 'NEAR',
+    ];
+    const priorityIndex = new Map<string, number>();
+    priority.forEach((s, i) => priorityIndex.set(s, i));
+
+    const seen = new Map<string, CoinInfo>();
+    for (const [key, coin] of Object.entries(coins)) {
+      if (!coin || coin.unavailable) continue;
+      const sym = (coin.symbol || key).toUpperCase();
+      if (!sym || sym.length > 10) continue;
+      // Skip Persian aliases or non-ascii
+      if (!/^[A-Z0-9]+$/.test(sym)) continue;
+      if (seen.has(sym)) continue;
+      // Skip very low-priority entries (stablecoin aliases)
+      if (sym === 'TETHER') continue;
+      seen.set(sym, coin);
+    }
+
+    const list = Array.from(seen.values());
+    list.sort((a, b) => {
+      const sa = (a.symbol || '').toUpperCase();
+      const sb = (b.symbol || '').toUpperCase();
+      const pa = priorityIndex.has(sa) ? priorityIndex.get(sa)! : 999;
+      const pb = priorityIndex.has(sb) ? priorityIndex.get(sb)! : 999;
+      if (pa !== pb) return pa - pb;
+      // Both not in priority list: sort by usd price desc
+      return (b.usdt || 0) - (a.usdt || 0);
+    });
+    return list;
+  }
+
   // ==========================================================================
   // PUBLIC: individual lookups
   // ==========================================================================
@@ -830,7 +912,6 @@ export class PriceService {
     const amount = parsed.amount > 0 ? parsed.amount : 1;
     const snap = await this.getUnifiedMarketSnapshot();
 
-    // Oil
     if (aliasKey.startsWith('oil') || clean.includes('نفت') || clean.includes('گاز')) {
       const type: 'brent' | 'wti' | 'gas' =
         aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti'
@@ -844,7 +925,6 @@ export class PriceService {
       };
     }
 
-    // Gold / Silver / Coins
     if (
       aliasKey.startsWith('gold') || aliasKey.startsWith('silver') || aliasKey.startsWith('seke') ||
       aliasKey.startsWith('mesghal') || aliasKey.startsWith('ons') ||
@@ -867,7 +947,6 @@ export class PriceService {
       };
     }
 
-    // Fiat
     const fiatKey = (aliasKey || '').toLowerCase();
     if (snap.fiat[fiatKey] || snap.fiat[clean]) {
       const f = snap.fiat[fiatKey] || snap.fiat[clean];
@@ -880,9 +959,8 @@ export class PriceService {
       };
     }
 
-    // Crypto
     const coins = snap.coins;
-    const coin = coins[aliasKey] || coins[clean] || coins[fiatKey];
+    const coin = coins[aliasKey] || coins[clean] || coins[fiatKey] || coins[aliasKey.toUpperCase()];
     if (coin) {
       if (coin.unavailable) {
         return {
@@ -911,27 +989,49 @@ export class PriceService {
 
   static async getMarketOverviewAssets(): Promise<AssetInfo[]> {
     const snap = await this.getUnifiedMarketSnapshot();
-    const coins = snap.coins;
+    const list = this.dedupeCoins(snap.coins);
 
-    const pick = (key: string, name: string, symbol: string): AssetInfo => {
-      const c = coins[key] || coins[symbol.toUpperCase()];
-      if (!c || c.unavailable) {
-        return { key, name, symbol, category: 'crypto', dayChange: 0, unavailable: true };
+    // Preferred order for the 9-slot grid
+    const preferred = ['BTC', 'ETH', 'SOL', 'TON', 'LTC', 'DOGE', 'XRP', 'BNB', 'TRX'];
+    const picked: AssetInfo[] = [];
+    const usedSymbols = new Set<string>();
+
+    const findCoin = (sym: string): CoinInfo | undefined =>
+      list.find((c) => (c.symbol || '').toUpperCase() === sym);
+
+    for (const sym of preferred) {
+      const c = findCoin(sym);
+      if (c && !c.unavailable) {
+        picked.push({
+          key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto',
+          priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange,
+        });
+        usedSymbols.add(sym);
       }
-      return { key, name, symbol, category: 'crypto', priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange };
-    };
+    }
 
-    return [
-      pick('btc', 'Bitcoin',   'BTC'),
-      pick('eth', 'Ethereum',  'ETH'),
-      pick('sol', 'Solana',    'SOL'),
-      pick('ton', 'Toncoin',   'TON'),
-      pick('ltc', 'Litecoin',  'LTC'),
-      pick('doge', 'Dogecoin', 'DOGE'),
-      pick('xrp', 'XRP',       'XRP'),
-      pick('bnb', 'BNB',       'BNB'),
-      pick('trx', 'Tron',      'TRX'),
-    ];
+    // If we still have room, add the next available high-value coins
+    for (const c of list) {
+      if (picked.length >= 9) break;
+      const sym = (c.symbol || '').toUpperCase();
+      if (usedSymbols.has(sym)) continue;
+      picked.push({
+        key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto',
+        priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange,
+      });
+      usedSymbols.add(sym);
+    }
+
+    // Fill remaining slots with unavailable placeholders
+    const fallback = ['BTC', 'ETH', 'SOL', 'TON', 'LTC', 'DOGE', 'XRP', 'BNB', 'TRX'];
+    for (const sym of fallback) {
+      if (picked.length >= 9) break;
+      if (usedSymbols.has(sym)) continue;
+      picked.push({ key: sym.toLowerCase(), name: sym, symbol: sym, category: 'crypto', dayChange: 0, unavailable: true });
+      usedSymbols.add(sym);
+    }
+
+    return picked.slice(0, 9);
   }
 
   // ==========================================================================
@@ -997,18 +1097,18 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // MINI APP DATA
+  // MINI APP DATA — SURFACES ALL COINS FROM PROVIDER
   // ==========================================================================
 
   static async getMiniAppData(): Promise<{
     highlights: any[]; crypto: any[]; gold: any[]; fiat: any[]; oil: any[];
     serverTime: string;
+    totalCryptoCount: number;
   }> {
     try {
       const snap = await this.getUnifiedMarketSnapshot();
       const dollarToman = snap.dollar.toman;
       const tetherToman = snap.tether.toman;
-      const coins = snap.coins;
 
       const makeItem = (
         key: string, symbol: string, name: string, persianName: string,
@@ -1038,8 +1138,12 @@ export class PriceService {
         };
       };
 
-      const btc = coins['btc'];
-      const ton = coins['ton'];
+      // ---------- 1. Highlights (fixed set) ----------
+      const coinsMap = snap.coins;
+      const btc = coinsMap['btc'] || coinsMap['BTC'];
+      const ton = coinsMap['ton'] || coinsMap['TON'];
+      const eth = coinsMap['eth'] || coinsMap['ETH'];
+
       const highlights = [
         makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
         makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', tetherToman, 1.0, snap.tether.dayChange, snap.tether.highToman, snap.tether.lowToman),
@@ -1048,45 +1152,31 @@ export class PriceService {
         btc && !btc.unavailable
           ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman)
           : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0),
-        ton && !ton.unavailable
-          ? makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', ton.irr, ton.usdt, ton.dayChange, ton.dayHighToman, ton.dayLowToman)
-          : makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', 0, undefined, 0),
+        eth && !eth.unavailable
+          ? makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', eth.irr, eth.usdt, eth.dayChange, eth.dayHighToman, eth.dayLowToman)
+          : makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', 0, undefined, 0),
       ];
 
-      const cryptoKeys: Array<{ key: string; name: string; fa: string }> = [
-        { key: 'btc', name: 'Bitcoin', fa: 'بیت کوین' },
-        { key: 'eth', name: 'Ethereum', fa: 'اتریوم' },
-        { key: 'usdt', name: 'Tether', fa: 'تتر دیجیتال' },
-        { key: 'ton', name: 'Toncoin', fa: 'تون کوین' },
-        { key: 'sol', name: 'Solana', fa: 'سولانا' },
-        { key: 'bnb', name: 'BNB', fa: 'بایننس کوین' },
-        { key: 'trx', name: 'Tron', fa: 'ترون' },
-        { key: 'doge', name: 'Dogecoin', fa: 'دوج کوین' },
-        { key: 'xrp', name: 'Ripple', fa: 'ریپل' },
-        { key: 'ada', name: 'Cardano', fa: 'کاردانو' },
-        { key: 'shib', name: 'Shiba Inu', fa: 'شیبا اینو' },
-        { key: 'pepe', name: 'Pepe', fa: 'پپه' },
-        { key: 'not', name: 'Notcoin', fa: 'نات کوین' },
-        { key: 'ltc', name: 'Litecoin', fa: 'لایت کوین' },
-        { key: 'bch', name: 'Bitcoin Cash', fa: 'بیت کوین کش' },
-        { key: 'avax', name: 'Avalanche', fa: 'اولنچ' },
-        { key: 'link', name: 'Chainlink', fa: 'چین لینک' },
-        { key: 'sui', name: 'Sui', fa: 'سویی' },
-        { key: 'near', name: 'Near Protocol', fa: 'نیر پروتکل' },
-      ];
-
-      const crypto = cryptoKeys.map((c) => {
-        const coin = coins[c.key];
-        if (!coin || coin.unavailable) {
-          return makeItem(c.key, c.key.toUpperCase(), c.name, c.fa, 'crypto', 0, undefined, 0);
-        }
+      // ---------- 2. Crypto — ALL coins from providers ----------
+      const allCoins = this.dedupeCoins(coinsMap);
+      const crypto = allCoins.map((coin) => {
+        const sym = (coin.symbol || '').toUpperCase();
+        const persianName = PERSIAN_NAMES[sym] || coin.name || sym;
         return makeItem(
-          c.key, c.key.toUpperCase(), c.name, c.fa, 'crypto',
-          c.key === 'usdt' ? tetherToman : coin.irr,
-          coin.usdt, coin.dayChange, coin.dayHighToman, coin.dayLowToman
+          sym.toLowerCase(),
+          sym,
+          coin.name || sym,
+          persianName,
+          'crypto',
+          sym === 'USDT' ? tetherToman : coin.irr,
+          coin.usdt,
+          coin.dayChange,
+          coin.dayHighToman,
+          coin.dayLowToman
         );
       });
 
+      // ---------- 3. Gold ----------
       const gold = [
         makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman),
         makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', snap.gold.gold24.tomanPrice, snap.gold.gold24.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold24.tomanPrice / tetherToman : undefined, snap.gold.gold24.dayChangePercent),
@@ -1100,6 +1190,7 @@ export class PriceService {
         makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', snap.gold.silver.tomanPrice, snap.gold.silver.tomanPrice > 0 && tetherToman > 0 ? snap.gold.silver.tomanPrice / tetherToman : undefined, snap.gold.silver.dayChangePercent),
       ];
 
+      // ---------- 4. Fiat ----------
       const fiat = [
         makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
         ...Object.values(snap.fiat).filter((f) => f.key !== 'usd').map((f) =>
@@ -1107,16 +1198,21 @@ export class PriceService {
         ),
       ];
 
+      // ---------- 5. Oil ----------
       const oil = [
         makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', snap.oil.brent?.priceToman || 0, snap.oil.brent?.priceUsd, snap.oil.brent?.dayChange || 0),
         makeItem('wti',   'WTI',   'WTI Crude Oil',   'نفت وست تگزاس',   'oil', snap.oil.wti?.priceToman || 0,   snap.oil.wti?.priceUsd,   snap.oil.wti?.dayChange || 0),
         makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0),
       ];
 
-      return { highlights, crypto, gold, fiat, oil, serverTime: snap.serverTime };
+      return {
+        highlights, crypto, gold, fiat, oil,
+        serverTime: snap.serverTime,
+        totalCryptoCount: crypto.length,
+      };
     } catch (e: any) {
       console.error('[PriceService] getMiniAppData failed:', e?.message || e);
-      return { highlights: [], crypto: [], gold: [], fiat: [], oil: [], serverTime: new Date().toISOString() };
+      return { highlights: [], crypto: [], gold: [], fiat: [], oil: [], serverTime: new Date().toISOString(), totalCryptoCount: 0 };
     }
   }
 
