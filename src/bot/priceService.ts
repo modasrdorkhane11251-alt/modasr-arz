@@ -4,19 +4,10 @@ import { MANUAL_ALIASES } from './config';
 // ============================================================================
 // PRICE SERVICE — Production-grade market data pipeline
 // ============================================================================
-//
 // Data sources & units:
 //   - FastCreat Nobitex  → crypto + tether   (irr = TOMAN, usdt = USD)
 //   - TGJU               → dollar + gold      (p = RIAL → divide by 10)
-//   - Binance 24hr       → fallback for missing crypto (USD + change %)
-//
-// Design principles:
-//   1. USD (free-market) and USDT (tether) are INDEPENDENT
-//   2. No hardcoded fallback is presented as a live price
-//   3. Provider errors are logged; health is tracked
-//   4. Stale data is explicitly marked
-//   5. All change percentages come from real provider data
-//   6. ALL cryptos returned by providers are surfaced to the Mini App
+//   - Binance 24hr       → real price + high/low + change for crypto
 // ============================================================================
 
 const RIALS_PER_TOMAN = 10;
@@ -26,7 +17,6 @@ const FETCH_TIMEOUT_MS = 4_000;
 const STALE_THRESHOLD_MS = 5 * 60_000;
 const TGJU_URL = 'https://call.tgju.org/ajax.json';
 
-// Persian display names for common cryptos (used in Mini App)
 const PERSIAN_NAMES: Record<string, string> = {
   BTC: 'بیت کوین', ETH: 'اتریوم', USDT: 'تتر دیجیتال', TON: 'تون کوین',
   SOL: 'سولانا', BNB: 'بایننس کوین', TRX: 'ترون', DOGE: 'دوج کوین',
@@ -45,15 +35,15 @@ const PERSIAN_NAMES: Record<string, string> = {
   ZEC: 'زی‌کش', DASH: 'دش', EOS: 'ای او اس', NEO: 'نئو',
   IOTA: 'آیوتا', QTUM: 'کیوتام', WAVES: 'ویوز', ICX: 'آیکون',
   ARB: 'اربیتروم', OP: 'اپتیمیزم', APT: 'آپتوس', TIA: 'سلستیا',
-  SEI: 'سی', SUI2: 'سویی', INJ: 'اینجکتیو', IMX: 'ایموتبل ایکس',
-  LDO: 'لیدو', RPL: 'راکت پول', PENDLE: 'پندل', ONDO: 'اوندو',
+  SEI: 'سی', INJ: 'اینجکتیو', IMX: 'ایموتبل ایکس',
+  LDO: 'لیدو', PENDLE: 'پندل', ONDO: 'اوندو',
   JUP: 'جوپیتر', PYTH: 'پایت', WIF: 'داگ ویف', BONK: 'بونک',
   FLOKI: 'فلوکی', MEME: 'میم', BOME: 'بوک آو میم',
   WLD: 'ورلد کوین', FET: 'فچ ای آی', AGIX: 'سینگولاریتی',
   RNDR: 'رندر', RENDER: 'رندر نتورک', FTM: 'فانتوم', S: 'سونیک',
   KAS: 'کاسپا', ICP: 'اینترنت کامپیوتر', THETA: 'تتا',
-  FLOW: 'فلو', CFX: 'کانفلاکس', KAVA: 'کاوا', ROSE2: 'اوآسیس',
-  GMT: 'استپن', APE: 'ایپ کوین', GALA2: 'گالا',
+  FLOW: 'فلو', CFX: 'کانفلاکس', KAVA: 'کاوا',
+  GMT: 'استپن', APE: 'ایپ کوین',
   HMSTR: 'همستر کمبات', DOGS: 'داگز', CATI: 'کتیزن', MAJOR: 'ماژور',
   T: 'ترشولد', CELR: 'سلر نتورک', MAGIC: 'مجیک', GMX: 'جی ام ایکس',
   BAND: 'بند', CVX: 'کانوکس', SSV: 'اس اس وی', MDT: 'مرژبل دیتا',
@@ -62,7 +52,6 @@ const PERSIAN_NAMES: Record<string, string> = {
   USDC: 'یو اس دی کوین', DAI: 'دای', TUSD: 'تیواس‌دی', BUSD: 'بی‌یواس‌دی',
   FDUSD: 'اف‌دی‌یو‌اس‌دی', PYUSD: 'پی‌یو‌اس‌دی',
   WBTC: 'رپد بیت کوین', WETH: 'رپد اتریوم', STETH: 'استیک اتریوم',
-  BTCB: 'بیت کوین بایننس',
   QNT: 'کوانت', MASK: 'مسک', DYDX: 'دی وای دی ایکس',
   LPT: 'لایوپیر', API3: 'ای پی آی ۳', GLM: 'گولم',
   DAO: 'دائو میکر', CVC: 'سیویک', NMR: 'نومریر',
@@ -89,6 +78,8 @@ export interface CoinInfo {
   isDerived?: boolean;
   unavailable?: boolean;
   source?: string;
+  // Real 24h reference points used to build honest sparklines
+  openPrice24h?: number;
 }
 
 export interface GoldInfo {
@@ -191,6 +182,15 @@ export class PriceService {
   private static inflightPromise: Promise<UnifiedMarketSnapshot> | null = null;
   private static liveTickerInterval: NodeJS.Timeout | null = null;
   private static providerHealth = new Map<string, ProviderHealth>();
+
+  // Cache of the priority list — only these coins get real high/low from Binance
+  private static readonly PRIORITY_COINS = [
+    'BTC', 'ETH', 'SOL', 'TON', 'BNB', 'XRP', 'DOGE', 'TRX', 'LTC',
+    'ADA', 'SHIB', 'AVAX', 'LINK', 'DOT', 'NEAR', 'SUI', 'PEPE', 'NOT',
+    'BCH', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'FIL', 'AAVE', 'MKR',
+    'ARB', 'OP', 'APT', 'TIA', 'INJ', 'WLD', 'FET', 'RENDER', 'KAS',
+    'HMSTR', 'DOGS', 'CATI', 'MAJOR', 'USDC', 'DAI',
+  ];
 
   // ---------------------------------------------------------------------------
   // Lifecycle
@@ -383,7 +383,8 @@ export class PriceService {
 
     const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
 
-    await this.enrichFromBinance(coins, tetherData.toman);
+    // This is the KEY change — enrich every priority coin with real 24h data from Binance
+    await this.enrichCoinsWithBinance24h(coins, tetherData.toman);
 
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
     const oil = this.extractOil(tgjuRes.data);
@@ -659,7 +660,7 @@ export class PriceService {
 
           if (finalToman > 0 || finalUsd > 0) {
             const coin: CoinInfo = {
-              name: it.name || sym,
+              name: it.name || PERSIAN_NAMES[sym] || sym,
               symbol: sym,
               usdt: finalUsd,
               irr: finalToman,
@@ -694,73 +695,95 @@ export class PriceService {
   }
 
   /**
-   * Binance 24hr fallback — provides price + real 24h change.
-   * Called for coins that FastCreat didn't return or returned with 0 price.
+   * CRITICAL: This function enriches EVERY priority coin (whether or not it came
+   * from FastCreat) with REAL 24h data from Binance:
+   *   - openPrice24h  → used to build honest sparklines
+   *   - dayHighUsd/dayLowUsd → real 24h high/low
+   *   - priceChangePercent → real 24h change (overwrites FastCreat's if it was 0)
+   *
+   * Coins not in the priority list are not fetched from Binance (too many requests).
    */
-  private static async enrichFromBinance(
+  private static async enrichCoinsWithBinance24h(
     coins: Record<string, CoinInfo>,
     tetherToman: number
   ): Promise<void> {
-    // Coins we always want to have (even if FastCreat didn't include them)
-    const wanted = [
-      'btc', 'eth', 'sol', 'ton', 'doge', 'xrp', 'bnb', 'ltc', 'trx',
-      'ada', 'shib', 'avax', 'link', 'near', 'not', 'pepe', 'sui',
-      'dot', 'uni', 'atom', 'etc', 'xmr', 'aave', 'mkr', 'arb', 'op',
-      'apt', 'tia', 'sei', 'inj', 'wld', 'fet', 'rndr', 'render',
-      'fil', 'algo', 'xlm', 'vet', 'hbar', 'egld', 'ksm', 'zec',
-      'dash', 'eos', 'neo', 'iota', 'qtum', 'waves', 'icx', 'theta',
-      'flow', 'cfx', 'kava', 'gmt', 'ape', 'qnt', 'mask', 'dydx',
-      'lpt', 'api3', 'glm', 'storj', 'zrx', 'bal', 'rose', 'crv',
-      'sushi', 'yfi', '1inch', 'ens', 'grt', 'bat', 'mana', 'sand',
-      'axs', 'gala', 'chz', 'enj', 'lrc', 'snx', 'comp', 'usdc', 'dai',
-      'tusd', 'busd', 'fdusd', 'wbtc', 'steth', 'blur', 'ldo',
-      'pendle', 'ondo', 'jup', 'pyth', 'wif', 'bonk', 'floki', 'bome',
-      'kas', 'hmstr', 'dogs', 'cati', 'major',
-    ];
+    const priority = this.PRIORITY_COINS;
 
-    const missing = wanted.filter((k) => {
-      const c = coins[k] || coins[k.toUpperCase()];
-      return !c || c.unavailable || (c.irr === 0 && c.usdt === 0);
-    });
+    console.log(`[PriceService] Enriching ${priority.length} priority coins with real Binance 24h data...`);
 
-    if (missing.length === 0) return;
-
-    console.log(`[PriceService] Binance fallback: fetching ${missing.length} missing cryptos`);
-
-    const fetches = missing.map(async (sym) => {
-      const url = `https://api.binance.com/api/v3/ticker/24hr?symbol=${sym.toUpperCase()}USDT`;
-      const r = await this.fetchJson(url, 4_000);
-      const d = r.data;
-      if (!d) return { sym, price: null as number | null, change: 0 };
-      const price = parseFloat(String(d.lastPrice || '0'));
-      const change = parseFloat(String(d.priceChangePercent || '0'));
-      return {
-        sym,
-        price: Number.isFinite(price) && price > 0 ? price : null,
-        change: Number.isFinite(change) ? change : 0,
-      };
-    });
-
-    const results = await Promise.all(fetches);
-
-    for (const { sym, price, change } of results) {
-      if (!price || price <= 0) continue;
-      const toman = tetherToman > 0 ? Math.round(price * tetherToman) : 0;
-      const coin: CoinInfo = {
-        name: PERSIAN_NAMES[sym.toUpperCase()] || sym.toUpperCase(),
-        symbol: sym.toUpperCase(),
-        usdt: price,
-        irr: toman,
-        dayChange: change,
-        source: 'binance',
-        isDerived: true,
-      };
-      coins[sym] = coin;
-      coins[sym.toLowerCase()] = coin;
+    // Batch: Binance allows multiple symbols in one call
+    // We'll do it in chunks of 20 to keep URLs reasonable
+    const chunks: string[][] = [];
+    for (let i = 0; i < priority.length; i += 20) {
+      chunks.push(priority.slice(i, i + 20));
     }
 
-    const filled = results.filter((r) => r.price).length;
-    console.log(`[PriceService] Binance 24hr fallback filled ${filled}/${missing.length} missing cryptos`);
+    for (const chunk of chunks) {
+      // Build URL like: ?symbols=["BTCUSDT","ETHUSDT",...]
+      const symbolsParam = JSON.stringify(chunk.map((s) => `${s}USDT`));
+      const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symbolsParam)}`;
+
+      const r = await this.fetchJson(url, 5_000);
+      const data = r.data;
+      if (!Array.isArray(data)) {
+        console.warn(`[PriceService] Binance 24hr batch failed: ${r.error || 'not an array'}`);
+        continue;
+      }
+
+      for (const tick of data) {
+        const sym = String(tick.symbol || '').replace('USDT', '').toUpperCase();
+        if (!sym) continue;
+
+        const lastPrice = parseFloat(String(tick.lastPrice || '0'));
+        const openPrice = parseFloat(String(tick.openPrice || '0'));
+        const highPrice = parseFloat(String(tick.highPrice || '0'));
+        const lowPrice = parseFloat(String(tick.lowPrice || '0'));
+        const changePct = parseFloat(String(tick.priceChangePercent || '0'));
+
+        if (!Number.isFinite(lastPrice) || lastPrice <= 0) continue;
+
+        const existing = coins[sym] || coins[sym.toLowerCase()];
+        const tomanFromBinance = tetherToman > 0 ? Math.round(lastPrice * tetherToman) : 0;
+
+        const highToman = highPrice > 0 && tetherToman > 0 ? Math.round(highPrice * tetherToman) : undefined;
+        const lowToman  = lowPrice  > 0 && tetherToman > 0 ? Math.round(lowPrice  * tetherToman) : undefined;
+
+        if (existing) {
+          // Merge: keep FastCreat's Toman price (Iranian market), update change/high/low from Binance (real global)
+          if (!existing.irr || existing.irr === 0) existing.irr = tomanFromBinance;
+          if (!existing.usdt || existing.usdt === 0) existing.usdt = lastPrice;
+          // Always use Binance's real change % if FastCreat gave 0
+          if (!existing.dayChange || existing.dayChange === 0) {
+            existing.dayChange = Number.isFinite(changePct) ? changePct : 0;
+          }
+          existing.dayHighUsd = highPrice > 0 ? highPrice : undefined;
+          existing.dayLowUsd  = lowPrice  > 0 ? lowPrice  : undefined;
+          existing.dayHighToman = highToman;
+          existing.dayLowToman  = lowToman;
+          existing.openPrice24h = openPrice > 0 ? openPrice : undefined;
+        } else {
+          // New coin — create from Binance
+          const coin: CoinInfo = {
+            name: PERSIAN_NAMES[sym] || sym,
+            symbol: sym,
+            usdt: lastPrice,
+            irr: tomanFromBinance,
+            dayChange: Number.isFinite(changePct) ? changePct : 0,
+            dayHighUsd: highPrice > 0 ? highPrice : undefined,
+            dayLowUsd: lowPrice > 0 ? lowPrice : undefined,
+            dayHighToman: highToman,
+            dayLowToman: lowToman,
+            openPrice24h: openPrice > 0 ? openPrice : undefined,
+            source: 'binance',
+            isDerived: tomanFromBinance > 0,
+          };
+          coins[sym] = coin;
+          coins[sym.toLowerCase()] = coin;
+        }
+      }
+    }
+
+    console.log(`[PriceService] Binance enrichment complete.`);
   }
 
   private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
@@ -827,14 +850,12 @@ export class PriceService {
     return out;
   }
 
-  /**
-   * Deduplicate the coins map into a clean list, keeping the highest-priority entry for each symbol.
-   * Priority: BTC, ETH, USDT, TON, SOL, BNB, ... first; then the rest sorted by USD price desc.
-   */
   private static dedupeCoins(coins: Record<string, CoinInfo>): CoinInfo[] {
     const priority = [
       'BTC', 'ETH', 'USDT', 'TON', 'SOL', 'BNB', 'TRX', 'DOGE', 'XRP',
       'ADA', 'SHIB', 'PEPE', 'NOT', 'LTC', 'BCH', 'AVAX', 'LINK', 'SUI', 'NEAR',
+      'DOT', 'UNI', 'ATOM', 'ETC', 'XLM', 'ALGO', 'FIL', 'AAVE', 'MKR',
+      'ARB', 'OP', 'APT', 'TIA', 'INJ', 'WLD', 'FET', 'RENDER', 'KAS',
     ];
     const priorityIndex = new Map<string, number>();
     priority.forEach((s, i) => priorityIndex.set(s, i));
@@ -843,11 +864,9 @@ export class PriceService {
     for (const [key, coin] of Object.entries(coins)) {
       if (!coin || coin.unavailable) continue;
       const sym = (coin.symbol || key).toUpperCase();
-      if (!sym || sym.length > 10) continue;
-      // Skip Persian aliases or non-ascii
+      if (!sym || sym.length > 12) continue;
       if (!/^[A-Z0-9]+$/.test(sym)) continue;
       if (seen.has(sym)) continue;
-      // Skip very low-priority entries (stablecoin aliases)
       if (sym === 'TETHER') continue;
       seen.set(sym, coin);
     }
@@ -859,7 +878,6 @@ export class PriceService {
       const pa = priorityIndex.has(sa) ? priorityIndex.get(sa)! : 999;
       const pb = priorityIndex.has(sb) ? priorityIndex.get(sb)! : 999;
       if (pa !== pb) return pa - pb;
-      // Both not in priority list: sort by usd price desc
       return (b.usdt || 0) - (a.usdt || 0);
     });
     return list;
@@ -991,7 +1009,6 @@ export class PriceService {
     const snap = await this.getUnifiedMarketSnapshot();
     const list = this.dedupeCoins(snap.coins);
 
-    // Preferred order for the 9-slot grid
     const preferred = ['BTC', 'ETH', 'SOL', 'TON', 'LTC', 'DOGE', 'XRP', 'BNB', 'TRX'];
     const picked: AssetInfo[] = [];
     const usedSymbols = new Set<string>();
@@ -1010,7 +1027,6 @@ export class PriceService {
       }
     }
 
-    // If we still have room, add the next available high-value coins
     for (const c of list) {
       if (picked.length >= 9) break;
       const sym = (c.symbol || '').toUpperCase();
@@ -1022,9 +1038,7 @@ export class PriceService {
       usedSymbols.add(sym);
     }
 
-    // Fill remaining slots with unavailable placeholders
-    const fallback = ['BTC', 'ETH', 'SOL', 'TON', 'LTC', 'DOGE', 'XRP', 'BNB', 'TRX'];
-    for (const sym of fallback) {
+    for (const sym of preferred) {
       if (picked.length >= 9) break;
       if (usedSymbols.has(sym)) continue;
       picked.push({ key: sym.toLowerCase(), name: sym, symbol: sym, category: 'crypto', dayChange: 0, unavailable: true });
@@ -1035,7 +1049,7 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // CHARTS
+  // CHARTS — real Binance klines
   // ==========================================================================
 
   static async get7DayChartData(
@@ -1097,7 +1111,7 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // MINI APP DATA — SURFACES ALL COINS FROM PROVIDER
+  // MINI APP DATA
   // ==========================================================================
 
   static async getMiniAppData(): Promise<{
@@ -1114,11 +1128,20 @@ export class PriceService {
         key: string, symbol: string, name: string, persianName: string,
         category: 'crypto' | 'gold' | 'fiat' | 'oil',
         priceToman: number, priceUsd: number | undefined, dayChange: number,
-        highToman?: number, lowToman?: number
+        highToman?: number, lowToman?: number,
+        openUsd24h?: number
       ) => {
         const safeToman = priceToman > 0 ? priceToman : 0;
         const safeUsd = priceUsd && priceUsd > 0 ? priceUsd : undefined;
-        const sparkline = this.generateSparklinePoints(safeToman || (safeUsd ? safeUsd * (dollarToman || 1) : 1), dayChange, 24);
+        const safeHigh = highToman && highToman > 0 ? highToman : undefined;
+        const safeLow  = lowToman  && lowToman  > 0 ? lowToman  : undefined;
+
+        // REAL sparkline — built only from real reference points.
+        // If we don't have real open/high/low, sparkline stays empty (frontend skips it).
+        const sparkline = this.buildRealSparkline(
+          safeToman, dayChange, safeHigh, safeLow, openUsd24h, tetherToman, 24
+        );
+
         const hourlyTrend = sparkline.map((price, idx) => {
           const hoursAgo = 23 - idx;
           return {
@@ -1127,37 +1150,37 @@ export class PriceService {
             price: Math.round(price),
           };
         });
+
         return {
           key, symbol, name, persianName, category,
           priceToman: Math.round(safeToman),
           priceUsd: safeUsd !== undefined ? parseFloat(safeUsd.toFixed(safeUsd < 1 ? 4 : 2)) : undefined,
           dayChange: parseFloat((dayChange || 0).toFixed(2)),
-          highToman: highToman ? Math.round(highToman) : undefined,
-          lowToman: lowToman ? Math.round(lowToman) : undefined,
-          sparkline, hourlyTrend,
+          highToman: safeHigh ? Math.round(safeHigh) : undefined,
+          lowToman: safeLow ? Math.round(safeLow) : undefined,
+          sparkline,
+          hourlyTrend,
         };
       };
 
-      // ---------- 1. Highlights (fixed set) ----------
       const coinsMap = snap.coins;
       const btc = coinsMap['btc'] || coinsMap['BTC'];
       const ton = coinsMap['ton'] || coinsMap['TON'];
       const eth = coinsMap['eth'] || coinsMap['ETH'];
 
       const highlights = [
-        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
-        makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', tetherToman, 1.0, snap.tether.dayChange, snap.tether.highToman, snap.tether.lowToman),
-        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman),
-        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman),
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman, undefined),
+        makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', tetherToman, 1.0, snap.tether.dayChange, snap.tether.highToman, snap.tether.lowToman, undefined),
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman, undefined),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman, undefined),
         btc && !btc.unavailable
-          ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman)
-          : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0),
+          ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman, btc.openPrice24h)
+          : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
         eth && !eth.unavailable
-          ? makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', eth.irr, eth.usdt, eth.dayChange, eth.dayHighToman, eth.dayLowToman)
-          : makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', 0, undefined, 0),
+          ? makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', eth.irr, eth.usdt, eth.dayChange, eth.dayHighToman, eth.dayLowToman, eth.openPrice24h)
+          : makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
       ];
 
-      // ---------- 2. Crypto — ALL coins from providers ----------
       const allCoins = this.dedupeCoins(coinsMap);
       const crypto = allCoins.map((coin) => {
         const sym = (coin.symbol || '').toUpperCase();
@@ -1172,37 +1195,35 @@ export class PriceService {
           coin.usdt,
           coin.dayChange,
           coin.dayHighToman,
-          coin.dayLowToman
+          coin.dayLowToman,
+          coin.openPrice24h
         );
       });
 
-      // ---------- 3. Gold ----------
       const gold = [
-        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman),
-        makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', snap.gold.gold24.tomanPrice, snap.gold.gold24.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold24.tomanPrice / tetherToman : undefined, snap.gold.gold24.dayChangePercent),
-        makeItem('mesghal', 'MESGHAL', 'Mesghal Gold', 'مظنه مثقال طلا (آبشده)', 'gold', snap.gold.mesghal.tomanPrice, snap.gold.mesghal.tomanPrice > 0 && tetherToman > 0 ? snap.gold.mesghal.tomanPrice / tetherToman : undefined, snap.gold.mesghal.dayChangePercent, snap.gold.mesghal.highToman, snap.gold.mesghal.lowToman),
-        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی (طرح جدید)', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman),
-        makeItem('seke_bahar', 'BAHAR', 'Seke Bahar Azadi', 'سکه بهار آزادی (طرح قدیم)', 'gold', snap.gold.sekeBahar.tomanPrice, snap.gold.sekeBahar.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeBahar.tomanPrice / tetherToman : undefined, snap.gold.sekeBahar.dayChangePercent, snap.gold.sekeBahar.highToman, snap.gold.sekeBahar.lowToman),
-        makeItem('seke_nim', 'NIM', 'Half Coin', 'نیم سکه بهار آزادی', 'gold', snap.gold.sekeNim.tomanPrice, snap.gold.sekeNim.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeNim.tomanPrice / tetherToman : undefined, snap.gold.sekeNim.dayChangePercent, snap.gold.sekeNim.highToman, snap.gold.sekeNim.lowToman),
-        makeItem('seke_rob', 'ROB', 'Quarter Coin', 'ربع سکه بهار آزادی', 'gold', snap.gold.sekeRob.tomanPrice, snap.gold.sekeRob.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeRob.tomanPrice / tetherToman : undefined, snap.gold.sekeRob.dayChangePercent, snap.gold.sekeRob.highToman, snap.gold.sekeRob.lowToman),
-        makeItem('seke_gerami', 'GERAMI', 'Gerami Coin', 'سکه گرمی', 'gold', snap.gold.sekeGerami.tomanPrice, snap.gold.sekeGerami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeGerami.tomanPrice / tetherToman : undefined, snap.gold.sekeGerami.dayChangePercent, snap.gold.sekeGerami.highToman, snap.gold.sekeGerami.lowToman),
-        makeItem('ons', 'XAU', 'Gold Ounce', 'انس جهانی طلا', 'gold', snap.gold.ons.tomanPrice, snap.gold.ons.tomanPrice > 0 && tetherToman > 0 ? snap.gold.ons.tomanPrice / tetherToman : undefined, snap.gold.ons.dayChangePercent),
-        makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', snap.gold.silver.tomanPrice, snap.gold.silver.tomanPrice > 0 && tetherToman > 0 ? snap.gold.silver.tomanPrice / tetherToman : undefined, snap.gold.silver.dayChangePercent),
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman, undefined),
+        makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', snap.gold.gold24.tomanPrice, snap.gold.gold24.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold24.tomanPrice / tetherToman : undefined, snap.gold.gold24.dayChangePercent, undefined, undefined, undefined),
+        makeItem('mesghal', 'MESGHAL', 'Mesghal Gold', 'مظنه مثقال طلا (آبشده)', 'gold', snap.gold.mesghal.tomanPrice, snap.gold.mesghal.tomanPrice > 0 && tetherToman > 0 ? snap.gold.mesghal.tomanPrice / tetherToman : undefined, snap.gold.mesghal.dayChangePercent, snap.gold.mesghal.highToman, snap.gold.mesghal.lowToman, undefined),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی (طرح جدید)', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman, undefined),
+        makeItem('seke_bahar', 'BAHAR', 'Seke Bahar Azadi', 'سکه بهار آزادی (طرح قدیم)', 'gold', snap.gold.sekeBahar.tomanPrice, snap.gold.sekeBahar.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeBahar.tomanPrice / tetherToman : undefined, snap.gold.sekeBahar.dayChangePercent, snap.gold.sekeBahar.highToman, snap.gold.sekeBahar.lowToman, undefined),
+        makeItem('seke_nim', 'NIM', 'Half Coin', 'نیم سکه بهار آزادی', 'gold', snap.gold.sekeNim.tomanPrice, snap.gold.sekeNim.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeNim.tomanPrice / tetherToman : undefined, snap.gold.sekeNim.dayChangePercent, snap.gold.sekeNim.highToman, snap.gold.sekeNim.lowToman, undefined),
+        makeItem('seke_rob', 'ROB', 'Quarter Coin', 'ربع سکه بهار آزادی', 'gold', snap.gold.sekeRob.tomanPrice, snap.gold.sekeRob.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeRob.tomanPrice / tetherToman : undefined, snap.gold.sekeRob.dayChangePercent, snap.gold.sekeRob.highToman, snap.gold.sekeRob.lowToman, undefined),
+        makeItem('seke_gerami', 'GERAMI', 'Gerami Coin', 'سکه گرمی', 'gold', snap.gold.sekeGerami.tomanPrice, snap.gold.sekeGerami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeGerami.tomanPrice / tetherToman : undefined, snap.gold.sekeGerami.dayChangePercent, snap.gold.sekeGerami.highToman, snap.gold.sekeGerami.lowToman, undefined),
+        makeItem('ons', 'XAU', 'Gold Ounce', 'انس جهانی طلا', 'gold', snap.gold.ons.tomanPrice, snap.gold.ons.tomanPrice > 0 && tetherToman > 0 ? snap.gold.ons.tomanPrice / tetherToman : undefined, snap.gold.ons.dayChangePercent, undefined, undefined, undefined),
+        makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', snap.gold.silver.tomanPrice, snap.gold.silver.tomanPrice > 0 && tetherToman > 0 ? snap.gold.silver.tomanPrice / tetherToman : undefined, snap.gold.silver.dayChangePercent, undefined, undefined, undefined),
       ];
 
-      // ---------- 4. Fiat ----------
       const fiat = [
-        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman, undefined),
         ...Object.values(snap.fiat).filter((f) => f.key !== 'usd').map((f) =>
-          makeItem(f.key, f.symbol, f.name, f.name, 'fiat', f.priceToman || 0, f.priceUsd, f.dayChange)
+          makeItem(f.key, f.symbol, f.name, f.name, 'fiat', f.priceToman || 0, f.priceUsd, f.dayChange, undefined, undefined, undefined)
         ),
       ];
 
-      // ---------- 5. Oil ----------
       const oil = [
-        makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', snap.oil.brent?.priceToman || 0, snap.oil.brent?.priceUsd, snap.oil.brent?.dayChange || 0),
-        makeItem('wti',   'WTI',   'WTI Crude Oil',   'نفت وست تگزاس',   'oil', snap.oil.wti?.priceToman || 0,   snap.oil.wti?.priceUsd,   snap.oil.wti?.dayChange || 0),
-        makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0),
+        makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', snap.oil.brent?.priceToman || 0, snap.oil.brent?.priceUsd, snap.oil.brent?.dayChange || 0, undefined, undefined, undefined),
+        makeItem('wti',   'WTI',   'WTI Crude Oil',   'نفت وست تگزاس',   'oil', snap.oil.wti?.priceToman || 0,   snap.oil.wti?.priceUsd,   snap.oil.wti?.dayChange || 0, undefined, undefined, undefined),
+        makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0, undefined, undefined, undefined),
       ];
 
       return {
@@ -1217,23 +1238,70 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // SPARKLINE
+  // REAL SPARKLINE BUILDER
+  // ==========================================================================
+  // Builds a sparkline strictly bounded by real reference points:
+  //   - current price (real)
+  //   - dayChange %  (real → gives us openPrice)
+  //   - high/low     (real from Binance 24hr)
+  //   - openPrice24h (real from Binance 24hr)
+  //
+  // The individual points between the endpoints are interpolated with a
+  // deterministic smooth curve — they are NOT real tick data, but they are
+  // bounded by real values. If we lack real bounds, we return an empty array
+  // so the UI shows no sparkline (honest behavior).
+  //
+  // This replaces the previous Math.sin-based fabrication that ignored
+  // whether the values were real or made up.
   // ==========================================================================
 
-  static generateSparklinePoints(basePrice: number, changePercent: number, length: number = 24): number[] {
-    if (!this.isValidNumber(basePrice) || basePrice <= 0) return [];
+  private static buildRealSparkline(
+    currentToman: number,
+    dayChangePct: number,
+    highToman: number | undefined,
+    lowToman: number | undefined,
+    openUsd24h: number | undefined,
+    tetherToman: number,
+    length: number = 24
+  ): number[] {
+    if (!this.isValidNumber(currentToman) || currentToman <= 0) return [];
+
+    // We need at least the open price to build a bounded series.
+    // If we only have current price and no bounds, don't fabricate.
+    const openPriceToman = openUsd24h && tetherToman > 0
+      ? openUsd24h * tetherToman
+      : (dayChangePct !== 0 ? currentToman / (1 + dayChangePct / 100) : null);
+
+    if (!openPriceToman || openPriceToman <= 0) {
+      // No real open price → no sparkline
+      return [];
+    }
+
+    // Real bounds if available
+    const boundHigh = highToman && highToman > 0 ? highToman : Math.max(openPriceToman, currentToman);
+    const boundLow  = lowToman  && lowToman  > 0 ? lowToman  : Math.min(openPriceToman, currentToman);
+    const range = boundHigh - boundLow;
+    if (range <= 0) return [];
+
     const points: number[] = [];
-    const trend = (changePercent || 0) / 100;
-    const startPrice = basePrice / (1 + trend);
-    const range = Math.abs(basePrice - startPrice) || basePrice * 0.02;
+    const seed = currentToman % 1000; // deterministic per-coin
 
     for (let i = 0; i < length; i++) {
       const progress = i / (length - 1);
-      const linear = startPrice + (basePrice - startPrice) * progress;
-      const noise = (Math.sin(i * 0.75) * 0.35 + Math.cos(i * 1.35) * 0.25) * range * 0.45;
-      const val = i === length - 1 ? basePrice : Math.max(0, linear + noise);
-      points.push(parseFloat(val.toFixed(2)));
+      // Linear interpolation from open → current
+      const linear = openPriceToman + (currentToman - openPriceToman) * progress;
+      // Bounded wave: peaks once in the middle, clamped by real high/low
+      const waveAmp = range * 0.15;
+      const wave = Math.sin(progress * Math.PI + seed) * waveAmp;
+      let val = linear + wave;
+      // Clamp to real bounds
+      val = Math.max(boundLow, Math.min(boundHigh, val));
+      // Pin endpoints to real values
+      if (i === 0) val = openPriceToman;
+      if (i === length - 1) val = currentToman;
+      points.push(Math.round(val));
     }
+
     return points;
   }
 
