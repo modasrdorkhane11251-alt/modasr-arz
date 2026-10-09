@@ -1,18 +1,21 @@
 /**
  * Telegram Bot & API Configuration
- * Preserves all tokens, URLs, admin settings, and cryptocurrency aliases from index.php & config.php
+ * Sensitive market-data credentials must come from server-side environment variables.
+ * No secrets are stored in the repository.
  */
 
-export const DEFAULT_BOT_TOKEN = process.env.BOT_TOKEN || '';
+const env = process.env;
+
+export const DEFAULT_BOT_TOKEN = env.BOT_TOKEN || '';
 
 export const BOT_CONFIG = {
-  token: process.env.BOT_TOKEN || '',
-  botUsername: process.env.BOT_USERNAME || 'Modasr_Arzbot',
-  adminId: parseInt(process.env.ADMIN_ID || '0', 10),
-  nobitexApi: 'https://api.fast-creat.ir/nobitex/v2/orderbook/all',
-  fastApiUrl: 'https://api.fast-creat.ir/nobitex/v2?apikey=6750948508:dNoLxDYryOH7QS5@Api_ManagerRoBot',
-  goldApiUrl: 'https://api.fast-creat.ir/gold?apikey=6750948508:ZqGU7X4Vj05BwLt@Api_ManagerRoBot',
-  nobitexDirectApi: 'https://api.nobitex.ir/market/stats',
+  token: env.BOT_TOKEN || '',
+  botUsername: env.BOT_USERNAME || 'Modasr_Arzbot',
+  adminId: parseInt(env.ADMIN_ID || '0', 10),
+  nobitexApi: env.NOBITEX_API_URL || 'https://api.nobitex.ir/market/stats',
+  fastApiUrl: env.FASTCREAT_CRYPTO_API_URL || 'https://api.fast-creat.ir/nobitex/v2',
+  goldApiUrl: env.FASTCREAT_GOLD_API_URL || 'https://api.fast-creat.ir/gold',
+  nobitexDirectApi: env.NOBITEX_DIRECT_API_URL || 'https://api.nobitex.ir/market/stats',
 };
 
 export const UNIFIED_DEFAULT_MARKET = {
@@ -340,5 +343,5 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'fet': 'fet',
   'فانتوم': 's',
   'ftm': 's',
-  's': 's'
+  's': 's',
 };
