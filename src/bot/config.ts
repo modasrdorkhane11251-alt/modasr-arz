@@ -1,7 +1,5 @@
-import dotenv from 'dotenv';
-dotenv.config();
-
-const env = process.env;
+// Only read process.env on the server. In the browser, fall back to an empty object.
+const env = (typeof process !== 'undefined' && process.env) ? process.env : {};
 
 export const DEFAULT_BOT_TOKEN = env.BOT_TOKEN || '';
 
