@@ -90,6 +90,7 @@ export interface AssetInfo {
   isStale?: boolean;
   isDerived?: boolean;
   unavailable?: boolean;
+  source?: string;          // ← NEW: which provider supplied this value (nobitex, wallex, tgju, …)
 }
 
 export interface ProviderHealth {
@@ -182,7 +183,6 @@ export class PriceService {
 
   static startLiveTicker(): void {
     if (this.liveTickerInterval) return;
-    // Fire immediately, then every LIVE_TICKER_INTERVAL_MS
     this.getUnifiedMarketSnapshot().catch((e) =>
       console.error('[PriceService] initial ticker fetch failed:', e?.message || e)
     );
@@ -346,12 +346,10 @@ export class PriceService {
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
     const now = Date.now();
 
-    // Serve cached snapshot if fresh
     if (this.unifiedSnapshot && now - this.lastSnapshotTime < CACHE_TTL_MS) {
       return this.unifiedSnapshot;
     }
 
-    // Deduplicate concurrent refreshes
     if (this.inflightPromise) {
       return this.inflightPromise;
     }
@@ -428,7 +426,6 @@ export class PriceService {
       }).format(new Date());
     } catch { /* ignore */ }
 
-    // Build all gold entries (no fabricated values; missing ones marked unavailable)
     const goldRecord: Record<string, GoldInfo> = {
       gold18: goldBundle.gold18.toGoldInfo(),
       gold24: goldBundle.gold24.toGoldInfo(),
@@ -482,12 +479,10 @@ export class PriceService {
       fiat,
     };
 
-    // Persist cache only if we have at least *something* live, OR we have no previous snapshot
     if (snapshot.metadata.isLive || this.unifiedSnapshot === null) {
       this.unifiedSnapshot = snapshot;
       this.lastSnapshotTime = fetchStart;
     } else if (this.unifiedSnapshot) {
-      // Keep serving previous (stale) snapshot but update its metadata to reflect the failed refresh
       console.warn('[PriceService] all providers failed — keeping last known snapshot, marking as stale');
       this.unifiedSnapshot.metadata.isStale = true;
       this.unifiedSnapshot.metadata.errors = errors;
@@ -498,14 +493,13 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // EXTRACTORS (pure functions that turn provider payloads into typed values)
+  // EXTRACTORS
   // ==========================================================================
 
   private static extractTether(primaryData: any, secondaryData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
-    // A) FastCreat/Nobitex wrapper format: { result: { USDT: { irr, usdt, dayChange } } }
     const nobitexUSDT =
       primaryData?.result?.USDT ||
       secondaryData?.result?.USDT;
@@ -526,7 +520,6 @@ export class PriceService {
       }
     }
 
-    // B) Nobitex raw stats: { stats: { 'usdt-rls': { latest, dayChange } } }
     const nobitexStats = primaryData?.stats || secondaryData?.stats;
     if (nobitexStats?.['usdt-rls']?.latest) {
       const pRials = parseFloat(nobitexStats['usdt-rls'].latest);
@@ -544,7 +537,6 @@ export class PriceService {
       }
     }
 
-    // C) Wallex: { result: { symbols: { USDTTMN: { stats: { lastPrice, 24h_ch, 24h_highPrice, 24h_lowPrice } } } } }
     const wallexSymbols =
       primaryData?.result?.symbols || primaryData?.symbols ||
       secondaryData?.result?.symbols || secondaryData?.symbols;
@@ -566,7 +558,6 @@ export class PriceService {
       }
     }
 
-    // D) No source — return zero, DO NOT fabricate
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
@@ -576,7 +567,6 @@ export class PriceService {
   } {
     const current = goldData?.current || goldData?.data?.current;
 
-    // TGJU: price_dollar_rl is the free-market dollar in RIAL
     const dollarField = current?.price_dollar_rl;
     if (dollarField?.p) {
       const pRials = this.parseNumberFromRaw(dollarField.p);
@@ -596,7 +586,6 @@ export class PriceService {
       }
     }
 
-    // No independent source available
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
@@ -627,7 +616,6 @@ export class PriceService {
 
     const current = goldData?.current || goldData?.data?.current;
 
-    // FastCreat gold array: { result: [{ title, price: ["rial", "(+1.2%)"], highest, lowest }, ...] }
     const arr = goldData?.result;
     if (Array.isArray(arr)) {
       for (const item of arr) {
@@ -664,7 +652,6 @@ export class PriceService {
       }
     }
 
-    // TGJU current object (values are RIALS)
     if (current) {
       const tg = (key: string, target: GoldExtract) => {
         const f = current[key];
@@ -701,7 +688,6 @@ export class PriceService {
   ): Record<string, CoinInfo> {
     const coins: Record<string, CoinInfo> = {};
 
-    // --- FastCreat/Nobitex wrapper ---
     const nobitexResult = primaryData?.result || secondaryData?.result;
     if (nobitexResult && typeof nobitexResult === 'object') {
       for (const [symKey, item] of Object.entries(nobitexResult)) {
@@ -710,7 +696,7 @@ export class PriceService {
         if (!it || typeof it !== 'object') continue;
 
         const sym = symKey.toUpperCase();
-        const rawIrr = parseFloat(String(it.irr || '0'));      // RIALS
+        const rawIrr = parseFloat(String(it.irr || '0'));
         const rawUsdt = parseFloat(String(it.usdt || '0'));
         const dayCh = parseFloat(String(it.dayChange || '0')) || 0;
 
@@ -739,7 +725,6 @@ export class PriceService {
       }
     }
 
-    // --- Wallex symbols ---
     const wallexSymbols =
       primaryData?.result?.symbols || primaryData?.symbols ||
       secondaryData?.result?.symbols || secondaryData?.symbols;
@@ -766,7 +751,6 @@ export class PriceService {
           ? lastP
           : (tetherToman > 0 ? parseFloat((coinToman / tetherToman).toFixed(6)) : 0);
 
-        // Only overwrite if we don't already have a valid entry from primary
         if (!coins[base.toLowerCase()] || coins[base.toLowerCase()].unavailable) {
           const coin: CoinInfo = {
             name: base,
@@ -784,7 +768,6 @@ export class PriceService {
       }
     }
 
-    // Add tether itself
     if (tetherToman > 0) {
       const usdt: CoinInfo = {
         name: 'تتر دیجیتال',
@@ -799,7 +782,6 @@ export class PriceService {
       coins['USDT'] = usdt;
     }
 
-    // Apply manual aliases (does NOT create new prices — only aliases to existing entries)
     for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
       const std = standard.toLowerCase();
       if (coins[std]) {
@@ -811,16 +793,15 @@ export class PriceService {
   }
 
   private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
-    // Base USD entry
     const usd: AssetInfo = {
       key: 'usd', name: 'US Dollar (دلار آمریکا)', symbol: 'USD', category: 'fiat',
       priceToman: dollarToman || undefined,
       priceUsd: 1.0,
       dayChange: 0,
       unavailable: !dollarLive,
+      source: 'tgju',
     };
 
-    // Cross rates vs USD (approximate static ratios — clearly marked as derived)
     const crosses: Array<[string, string, number]> = [
       ['eur', 'Euro (یورو)',       1.08],
       ['gbp', 'British Pound (پوند)', 1.27],
@@ -839,35 +820,35 @@ export class PriceService {
         priceUsd: ratio,
         priceToman: dollarToman > 0 ? Math.round(ratio * dollarToman) : undefined,
         dayChange: 0,
-        isDerived: true,     // <-- clearly marked
+        isDerived: true,
         unavailable: !dollarLive,
+        source: 'derived',
       };
     }
     return out;
   }
 
   private static extractOil(goldData: any): Record<string, AssetInfo> {
-    // TGJU exposes brent as "oil_brent" or "brent" in the current object
     const current = goldData?.current || goldData?.data?.current;
     const out: Record<string, AssetInfo> = {};
 
     const makeOil = (key: string, name: string, symbol: string, fieldKey: string): AssetInfo => {
       const f = current?.[fieldKey];
       if (f?.p) {
-        const usd = this.parseNumberFromRaw(f.p);          // TGJU stores oil in USD
+        const usd = this.parseNumberFromRaw(f.p);
         const ch  = parseFloat(String(f.dp || f.d || '0')) || 0;
         if (usd > 0) {
           return {
             key, name, symbol, category: 'oil',
             priceUsd: usd,
-            priceToman: undefined,  // toman value depends on the dollar rate; caller can compute
+            priceToman: undefined,
             dayChange: ch,
             unit: 'per barrel',
-            source: undefined,
+            source: 'tgju',
           };
         }
       }
-      return { key, name, symbol, category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel' };
+      return { key, name, symbol, category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable' };
     };
 
     out['brent'] = makeOil('oil_brent', 'Brent Crude Oil (نفت برنت)', 'BRENT', 'oil_brent');
@@ -883,7 +864,7 @@ export class PriceService {
   static async getOilPrice(type: 'brent' | 'wti' | 'gas' = 'brent'): Promise<AssetInfo> {
     const snap = await this.getUnifiedMarketSnapshot();
     const key = (type || 'brent').toLowerCase();
-    return snap.oil[key] || { key: `oil_${key}`, name: key, symbol: key.toUpperCase(), category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel' };
+    return snap.oil[key] || { key: `oil_${key}`, name: key, symbol: key.toUpperCase(), category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable' };
   }
 
   static async getGoldPrice(): Promise<GoldInfo | null> {
@@ -920,7 +901,6 @@ export class PriceService {
     const amount = parsed.amount > 0 ? parsed.amount : 1;
     const snap = await this.getUnifiedMarketSnapshot();
 
-    // Oil
     if (aliasKey.startsWith('oil') || clean.includes('نفت') || clean.includes('گاز')) {
       const type: 'brent' | 'wti' | 'gas' =
         aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti'
@@ -936,7 +916,6 @@ export class PriceService {
       };
     }
 
-    // Gold / Silver / Coins
     if (
       aliasKey.startsWith('gold') || aliasKey.startsWith('silver') || aliasKey.startsWith('seke') ||
       aliasKey.startsWith('mesghal') || aliasKey.startsWith('ons') ||
@@ -962,7 +941,6 @@ export class PriceService {
       };
     }
 
-    // Fiat
     const fiatKey = (aliasKey || '').toLowerCase();
     if (snap.fiat[fiatKey] || snap.fiat[clean]) {
       const f = snap.fiat[fiatKey] || snap.fiat[clean];
@@ -975,7 +953,6 @@ export class PriceService {
       };
     }
 
-    // Crypto
     const coins = snap.coins;
     const coin = coins[aliasKey] || coins[clean] || coins[fiatKey];
     if (coin) {
@@ -1045,7 +1022,6 @@ export class PriceService {
   ): Promise<Chart7DayData> {
     const cleanSym = (symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    // --- 1. Real Binance klines for crypto (2h candles × 84 = 7 days) --------
     const isCrypto = !(
       cleanSym.startsWith('GOLD') || cleanSym.startsWith('SEKE') || cleanSym.startsWith('SILVER') ||
       cleanSym.startsWith('OIL') || cleanSym.startsWith('BRENT') || cleanSym.startsWith('WTI') ||
@@ -1092,8 +1068,6 @@ export class PriceService {
       }
     }
 
-    // --- 2. No real source for this asset -----------------------------------
-    // We do NOT invent a series. We return an explicit unavailable marker.
     return {
       points: [],
       high: 0,
@@ -1155,7 +1129,6 @@ export class PriceService {
         };
       };
 
-      // Highlights
       const btc = coins['btc'];
       const ton = coins['ton'];
       const highlights = [
@@ -1364,7 +1337,7 @@ export class PriceService {
 }
 
 // ============================================================================
-// INTERNAL HELPER CLASS (only used inside this module)
+// INTERNAL HELPER CLASS
 // ============================================================================
 
 class GoldExtract {
