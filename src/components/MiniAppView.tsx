@@ -1,4 +1,14 @@
 import React, { useState, useEffect, useMemo } from 'react';
+import {
+  ResponsiveContainer,
+  LineChart,
+  Line,
+  AreaChart,
+  Area,
+  XAxis,
+  YAxis,
+  Tooltip,
+} from 'recharts';
 import { AssetLogo } from './AssetLogo';
 import { MiniAppLogo } from './MiniAppLogo';
 import {
@@ -32,7 +42,10 @@ import {
   BarChart3,
   Activity,
   ShieldCheck,
+  Sun,
+  Moon,
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
 
 interface MiniAppItem {
   key: string;
@@ -46,6 +59,7 @@ interface MiniAppItem {
   highToman: number;
   lowToman: number;
   sparkline: number[];
+  hourlyTrend?: { time: string; hour: string; price: number }[];
 }
 
 interface MiniAppData {
@@ -63,6 +77,7 @@ interface MiniAppViewProps {
 }
 
 export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isStandalone = false }) => {
+  const { theme, toggleTheme, isWhite } = useTheme();
   const [data, setData] = useState<MiniAppData | null>(null);
   const [loading, setLoading] = useState<boolean>(true);
   const [refreshing, setRefreshing] = useState<boolean>(false);
@@ -145,7 +160,7 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
 
   useEffect(() => {
     fetchData();
-    const interval = setInterval(() => fetchData(false), 5000);
+    const interval = setInterval(() => fetchData(false), 2000);
     return () => clearInterval(interval);
   }, []);
 
@@ -224,28 +239,201 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
     return <AssetLogo symbol={symbol} category={category} size={size} />;
   };
 
-  // Sparkline mini SVG curve
-  const renderSparklineSvg = (points: number[], isPositive: boolean) => {
-    if (!points || points.length < 2) return null;
-    const min = Math.min(...points);
-    const max = Math.max(...points);
-    const range = max - min || 1;
-    const width = 64;
-    const height = 24;
-
-    const coords = points.map((p, i) => {
-      const x = (i / (points.length - 1)) * width;
-      const y = height - ((p - min) / range) * (height - 6) - 3;
-      return `${x.toFixed(1)},${y.toFixed(1)}`;
-    });
-
-    const pathD = `M ${coords.join(' L ')}`;
+  // Recharts 24-Hour Sparkline Mini Trend Line Chart for each item
+  const renderRechartsSparkline = (
+    sparkline: number[] | undefined,
+    isPositive: boolean,
+    width: number = 70,
+    height: number = 28
+  ) => {
+    if (!sparkline || sparkline.length < 2) return null;
     const strokeColor = isPositive ? '#10B981' : '#F43F5E';
+    const chartData = sparkline.map((val, idx) => ({ idx, price: val }));
+    const minVal = Math.min(...sparkline);
+    const maxVal = Math.max(...sparkline);
+    const pad = (maxVal - minVal) * 0.08 || 1;
 
     return (
-      <svg width={width} height={height} className="overflow-visible">
-        <path d={pathD} fill="none" stroke={strokeColor} strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
+      <div
+        className="flex items-center justify-center flex-shrink-0"
+        style={{ width, height }}
+        title="نمودار روند ۲۴ ساعت اخیر (Recharts)"
+      >
+        <LineChart
+          width={width}
+          height={height}
+          data={chartData}
+          margin={{ top: 2, right: 2, bottom: 2, left: 2 }}
+        >
+          <YAxis domain={[minVal - pad, maxVal + pad]} hide />
+          <Line
+            type="monotone"
+            dataKey="price"
+            stroke={strokeColor}
+            strokeWidth={2}
+            dot={false}
+            isAnimationActive={false}
+          />
+        </LineChart>
+      </div>
+    );
+  };
+
+  // Recharts Full Interactive Trend Chart for Detail Modal (24h, 7d, 30d, 1y)
+  const renderDetailRechartsChart = (item: MiniAppItem) => {
+    const isPositive = item.dayChange >= 0;
+    const strokeColor = isPositive ? '#10B981' : '#F43F5E';
+    const gradientId = `trendGradient_${item.key}_${isPositive ? 'pos' : 'neg'}`;
+
+    const points = item.sparkline && item.sparkline.length >= 2 ? item.sparkline : [item.priceToman * 0.98, item.priceToman];
+    const multiplier = chartTimeframe === '24h' ? 1 : chartTimeframe === '7d' ? 1.025 : chartTimeframe === '30d' ? 1.06 : 1.14;
+    
+    const chartData = points.map((p, idx) => {
+      const hoursAgo = Math.max(0, points.length - 1 - idx);
+      const hourLabel =
+        chartTimeframe === '24h'
+          ? hoursAgo === 0
+            ? 'اکنون'
+            : `${hoursAgo}h پیش`
+          : chartTimeframe === '7d'
+          ? `روز ${Math.ceil(((idx + 1) / points.length) * 7)}`
+          : chartTimeframe === '30d'
+          ? `روز ${Math.ceil(((idx + 1) / points.length) * 30)}`
+          : `ماه ${Math.ceil(((idx + 1) / points.length) * 12)}`;
+      
+      const price = Math.round(p * (1 + (idx / points.length) * (multiplier - 1)));
+      return {
+        idx,
+        time: hourLabel,
+        price,
+        usd: item.priceUsd ? parseFloat(((price / item.priceToman) * item.priceUsd).toFixed(item.priceUsd < 1 ? 4 : 2)) : undefined,
+      };
+    });
+
+    const prices = chartData.map((d) => d.price);
+    const minPrice = Math.min(...prices);
+    const maxPrice = Math.max(...prices);
+    const diff = maxPrice - minPrice || 1;
+    const yMin = Math.round(minPrice - diff * 0.05);
+    const yMax = Math.round(maxPrice + diff * 0.05);
+
+    return (
+      <div className="w-full">
+        {/* Trend summary header above chart */}
+        <div className="flex items-center justify-between text-[11px] mb-2 px-1">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full" style={{ backgroundColor: strokeColor }} />
+            <span className={`font-bold ${isWhite ? 'text-neutral-700' : 'text-slate-300'}`}>
+              روند نوسان {chartTimeframe === '24h' ? '۲۴ ساعت اخیر' : chartTimeframe === '7d' ? '۷ روز اخیر' : chartTimeframe === '30d' ? '۳۰ روز اخیر' : '۱ سال اخیر'}
+            </span>
+          </div>
+          <div className="text-[10px] font-mono text-slate-400">
+            دامنه نوسان: <span className="font-bold text-slate-300">{fmtNum(diff)} تومان</span>
+          </div>
+        </div>
+
+        {/* Recharts Area Container */}
+        <div className="h-[185px] w-full">
+          <ResponsiveContainer width="100%" height="100%">
+            <AreaChart data={chartData} margin={{ top: 8, right: 6, left: 6, bottom: 0 }}>
+              <defs>
+                <linearGradient id={gradientId} x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="5%" stopColor={strokeColor} stopOpacity={0.35} />
+                  <stop offset="95%" stopColor={strokeColor} stopOpacity={0.0} />
+                </linearGradient>
+              </defs>
+              <YAxis domain={[yMin, yMax]} hide />
+              <XAxis
+                dataKey="time"
+                tickLine={false}
+                axisLine={false}
+                interval={Math.floor(chartData.length / 4)}
+                tick={{ fill: isWhite ? '#737373' : '#94A3B8', fontSize: 10 }}
+              />
+              <Tooltip
+                content={({ active, payload }) => {
+                  if (active && payload && payload.length) {
+                    const data = payload[0].payload;
+                    return (
+                      <div
+                        className={`p-2.5 rounded-xl text-xs shadow-xl border ${
+                          isWhite
+                            ? 'bg-white border-neutral-300 text-black'
+                            : 'bg-[#0B132B]/95 border-slate-700 text-white'
+                        }`}
+                      >
+                        <div className="text-[10px] text-slate-400 font-mono mb-0.5">{data.time}</div>
+                        <div className="font-bold font-mono text-cyan-400">
+                          {fmtNum(data.price)} <span className="text-[9px] font-sans text-slate-400">تومان</span>
+                        </div>
+                        {data.usd !== undefined && (
+                          <div className="text-[10px] font-mono text-slate-400 mt-0.5">
+                            ${fmtUsd(data.usd)} USD
+                          </div>
+                        )}
+                      </div>
+                    );
+                  }
+                  return null;
+                }}
+              />
+              <Area
+                type="monotone"
+                dataKey="price"
+                stroke={strokeColor}
+                strokeWidth={2.2}
+                fillOpacity={1}
+                fill={`url(#${gradientId})`}
+                isAnimationActive={true}
+              />
+            </AreaChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+    );
+  };
+
+  // Real-time Up/Down Percentage Badge with Green/Red styling and Arrows
+  const renderChangeBadge = (
+    dayChange: number,
+    size: 'xs' | 'sm' | 'md' | 'lg' = 'sm',
+    showIcon: boolean = true
+  ) => {
+    const isPositive = dayChange >= 0;
+    const formatted = `${isPositive ? '+' : ''}${dayChange.toFixed(2)}%`;
+    const textSize =
+      size === 'xs'
+        ? 'text-[9px] px-1 py-0.5'
+        : size === 'sm'
+        ? 'text-[10px] px-1.5 py-0.5'
+        : size === 'md'
+        ? 'text-[11px] px-2 py-0.5'
+        : 'text-xs px-2.5 py-1';
+
+    const iconSize = size === 'xs' ? 'w-2.5 h-2.5' : size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5';
+
+    const themeColors = isPositive
+      ? isWhite
+        ? 'bg-emerald-100 text-emerald-800 border-emerald-300'
+        : 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+      : isWhite
+      ? 'bg-rose-100 text-rose-800 border-rose-300'
+      : 'bg-rose-500/15 text-rose-400 border-rose-500/30';
+
+    return (
+      <span
+        dir="ltr"
+        className={`inline-flex items-center gap-1 font-mono font-bold rounded-lg border shadow-sm transition-all ${textSize} ${themeColors}`}
+      >
+        {showIcon && (
+          isPositive ? (
+            <TrendingUp className={`${iconSize} flex-shrink-0 text-emerald-500`} />
+          ) : (
+            <TrendingDown className={`${iconSize} flex-shrink-0 text-rose-500`} />
+          )
+        )}
+        <span>{formatted}</span>
+      </span>
     );
   };
 
@@ -293,50 +481,74 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
   };
 
   return (
-    <div className="min-h-screen bg-[#070B14] text-slate-100 font-['Vazirmatn',sans-serif] pb-24 select-none relative max-w-md mx-auto shadow-2xl overflow-x-hidden border-x border-slate-900/60">
+    <div className={`min-h-screen ${isWhite ? 'bg-white text-black border-neutral-200' : 'bg-[#070B14] text-slate-100 border-slate-900/60'} font-['Vazirmatn',sans-serif] pb-24 select-none relative max-w-md mx-auto shadow-2xl overflow-x-hidden border-x transition-colors duration-200`}>
       
       {/* 1. TOP HEADER & IDENTITY */}
-      <header className="sticky top-0 z-30 bg-[#070B14]/95 backdrop-blur-xl border-b border-slate-800/80 px-4 pt-3 pb-3">
+      <header className={`sticky top-0 z-30 ${isWhite ? 'bg-white/95 border-b border-neutral-200' : 'bg-[#070B14]/95 border-b border-slate-800/80'} backdrop-blur-xl px-4 pt-3 pb-3 transition-colors duration-200`}>
         <div className="flex items-center justify-between">
           <div className="flex items-center gap-2.5">
             <div className="relative">
               <MiniAppLogo logoUrl={(data as any)?.brand?.miniAppLogoUrl} size={40} className="border-amber-500/50 shadow-md shadow-amber-500/20" />
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#070B14] animate-ping" />
-              <span className="absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 border-[#070B14]" />
+              <span className={`absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 ${isWhite ? 'border-white' : 'border-[#070B14]'} animate-ping`} />
+              <span className={`absolute -top-1 -right-1 w-3 h-3 bg-emerald-500 rounded-full border-2 ${isWhite ? 'border-white' : 'border-[#070B14]'}`} />
             </div>
             <div>
               <div className="flex items-center gap-1.5">
-                <h1 className="text-sm font-black text-white tracking-tight">
+                <h1 className={`text-sm font-black ${isWhite ? 'text-black' : 'text-white'} tracking-tight`}>
                   {(data as any)?.brand?.title || 'mini MODASR arz'}
                 </h1>
-                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-300 border border-cyan-500/30 font-bold">
+                <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-gradient-to-r from-cyan-500/20 to-blue-500/20 text-cyan-600 font-bold border border-cyan-500/30">
                   ⚡ شاخص زنده
                 </span>
               </div>
-              <div className="flex items-center gap-1.5 text-[11px] text-slate-400">
+              <div className={`flex items-center gap-1.5 text-[11px] ${isWhite ? 'text-neutral-600' : 'text-slate-400'}`}>
                 <span className="w-1.5 h-1.5 rounded-full bg-emerald-500"></span>
                 <span>{(data as any)?.brand?.subtitle || 'فید زنده بایننس و TGJU'}</span>
-                {tgUser && <span className="text-cyan-400 font-bold">• {tgUser.first_name}</span>}
+                {tgUser && <span className="text-cyan-600 font-bold">• {tgUser.first_name}</span>}
               </div>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5">
+            {/* Theme Toggle (دو حالت: تک سفید با متن‌های سیا و حالت شب) */}
+            <button
+              onClick={() => {
+                triggerHaptic();
+                toggleTheme();
+              }}
+              className={`p-2 rounded-xl border active:scale-95 transition-all flex items-center justify-center ${
+                isWhite
+                  ? 'bg-neutral-100 hover:bg-neutral-200 border-neutral-300 text-neutral-900 shadow-sm'
+                  : 'bg-slate-900/90 hover:bg-slate-800 border-slate-800 text-amber-300 shadow-sm'
+              }`}
+              title={isWhite ? 'تغییر به حالت شب 🌙' : 'تغییر به حالت تک سفید با متن سیاه ☀️'}
+            >
+              {isWhite ? <Moon className="w-4 h-4 text-cyan-600" /> : <Sun className="w-4 h-4 text-amber-400" />}
+            </button>
+
             <button
               onClick={() => {
                 triggerHaptic();
                 fetchData(true);
               }}
-              className="p-2 rounded-xl bg-slate-900/90 border border-slate-800 text-slate-300 hover:text-white active:scale-95 transition-all flex items-center gap-1"
+              className={`p-2 rounded-xl border active:scale-95 transition-all flex items-center gap-1 ${
+                isWhite
+                  ? 'bg-neutral-100 hover:bg-neutral-200 border-neutral-300 text-neutral-800 shadow-sm'
+                  : 'bg-slate-900/90 border-slate-800 text-slate-300 hover:text-white'
+              }`}
               title="به‌روزرسانی قیمت‌ها"
             >
-              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-cyan-400' : ''}`} />
+              <RefreshCw className={`w-4 h-4 ${refreshing ? 'animate-spin text-cyan-500' : ''}`} />
             </button>
 
             {!isStandalone && onBackToDashboard && (
               <button
                 onClick={onBackToDashboard}
-                className="px-2.5 py-1.5 rounded-xl bg-slate-900 border border-slate-800 text-[11px] text-slate-300 hover:text-white active:scale-95 transition-all flex items-center gap-1"
+                className={`px-2.5 py-1.5 rounded-xl border text-[11px] active:scale-95 transition-all flex items-center gap-1 ${
+                  isWhite
+                    ? 'bg-neutral-100 hover:bg-neutral-200 border-neutral-300 text-neutral-800 shadow-sm'
+                    : 'bg-slate-900 border-slate-800 text-slate-300 hover:text-white'
+                }`}
                 title="بازگشت به پنل مدیریت"
               >
                 <span>پنل وب</span>
@@ -353,13 +565,17 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
             value={searchQuery}
             onChange={(e) => setSearchQuery(e.target.value)}
             placeholder="جستجوی نام یا نماد ارز (بیت کوین، طلا، تتر، USD...)"
-            className="w-full pr-10 pl-9 py-2.5 rounded-2xl bg-slate-900/90 border border-slate-800 text-xs text-white placeholder-slate-500 focus:outline-none focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30 transition-all"
+            className={`w-full pr-10 pl-9 py-2.5 rounded-2xl border text-xs focus:outline-none transition-all ${
+              isWhite
+                ? 'bg-neutral-100 border-neutral-300 text-black placeholder-neutral-500 focus:border-cyan-600 focus:bg-white'
+                : 'bg-slate-900/90 border-slate-800 text-white placeholder-slate-500 focus:border-cyan-500/60 focus:ring-1 focus:ring-cyan-500/30'
+            }`}
           />
-          <Search className="w-4 h-4 text-slate-400 absolute right-3.5 top-3" />
+          <Search className={`w-4 h-4 ${isWhite ? 'text-neutral-500' : 'text-slate-400'} absolute right-3.5 top-3`} />
           {searchQuery && (
             <button
               onClick={() => setSearchQuery('')}
-              className="absolute left-3 top-3 text-slate-400 hover:text-white text-xs"
+              className={`absolute left-3 top-3 ${isWhite ? 'text-neutral-500 hover:text-black' : 'text-slate-400 hover:text-white'} text-xs`}
             >
               ✕
             </button>
@@ -437,18 +653,16 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       {renderCoinIcon('USDT', 'crypto', 24)}
                       <span className="text-[11px] font-bold text-slate-200">تتر / دلار</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                      usdtItem.dayChange >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
-                    }`}>
-                      {usdtItem.dayChange >= 0 ? '+' : ''}{usdtItem.dayChange}%
-                    </span>
+                    {renderChangeBadge(usdtItem.dayChange, 'sm', true)}
                   </div>
                   <div className="text-sm font-black text-white font-mono tracking-tight mt-1">
                     {fmtNum(usdtItem.priceToman)} <span className="text-[9px] font-sans text-slate-400 font-normal">تومان</span>
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
-                    <span>نرخ حواله آزاد</span>
-                    <span className="text-cyan-400 font-mono">1.00 USD</span>
+                  <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="text-[10px] text-slate-400">
+                      <span>۱ دلار آزاد</span>
+                    </div>
+                    {renderRechartsSparkline(usdtItem.sparkline, usdtItem.dayChange >= 0, 68, 22)}
                   </div>
                 </div>
               )}
@@ -467,18 +681,16 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       {renderCoinIcon('GOLD18', 'gold', 24)}
                       <span className="text-[11px] font-bold text-amber-300">طلای ۱۸ عیار</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                      gold18Item.dayChange >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
-                    }`}>
-                      {gold18Item.dayChange >= 0 ? '+' : ''}{gold18Item.dayChange}%
-                    </span>
+                    {renderChangeBadge(gold18Item.dayChange, 'sm', true)}
                   </div>
                   <div className="text-sm font-black text-white font-mono tracking-tight mt-1">
                     {fmtNum(gold18Item.priceToman)} <span className="text-[9px] font-sans text-slate-400 font-normal">تومان</span>
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
-                    <span>هر گرم خام</span>
-                    <span className="text-amber-400 font-mono">750/1000</span>
+                  <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="text-[10px] text-slate-400">
+                      <span>هر گرم خام</span>
+                    </div>
+                    {renderRechartsSparkline(gold18Item.sparkline, gold18Item.dayChange >= 0, 68, 22)}
                   </div>
                 </div>
               )}
@@ -497,18 +709,16 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       {renderCoinIcon('SEKE_EMAMI', 'gold', 24)}
                       <span className="text-[11px] font-bold text-slate-200">سکه امامی</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                      coinItem.dayChange >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
-                    }`}>
-                      {coinItem.dayChange >= 0 ? '+' : ''}{coinItem.dayChange}%
-                    </span>
+                    {renderChangeBadge(coinItem.dayChange, 'sm', true)}
                   </div>
                   <div className="text-sm font-black text-white font-mono tracking-tight mt-1">
                     {fmtNum(coinItem.priceToman)} <span className="text-[9px] font-sans text-slate-400 font-normal">تومان</span>
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
-                    <span>طرح جدید</span>
-                    <span className="text-emerald-400 font-mono">تهران</span>
+                  <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="text-[10px] text-slate-400">
+                      <span>طرح جدید</span>
+                    </div>
+                    {renderRechartsSparkline(coinItem.sparkline, coinItem.dayChange >= 0, 68, 22)}
                   </div>
                 </div>
               )}
@@ -527,18 +737,16 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       {renderCoinIcon('BTC', 'crypto', 24)}
                       <span className="text-[11px] font-bold text-slate-200">بیت‌کوین (BTC)</span>
                     </div>
-                    <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md ${
-                      btcItem.dayChange >= 0 ? 'bg-emerald-500/15 text-emerald-400' : 'bg-rose-500/15 text-rose-400'
-                    }`}>
-                      {btcItem.dayChange >= 0 ? '+' : ''}{btcItem.dayChange}%
-                    </span>
+                    {renderChangeBadge(btcItem.dayChange, 'sm', true)}
                   </div>
                   <div className="text-sm font-black text-white font-mono tracking-tight mt-1">
                     ${fmtUsd(btcItem.priceUsd)}
                   </div>
-                  <div className="text-[10px] text-slate-400 mt-0.5 flex items-center justify-between">
-                    <span>معادل بازار:</span>
-                    <span className="text-cyan-400 font-mono">{fmtNum(btcItem.priceToman)} ت</span>
+                  <div className="mt-2 pt-1.5 border-t border-slate-800/80 flex items-center justify-between">
+                    <div className="text-[10px] text-slate-400">
+                      <span>{fmtNum(btcItem.priceToman)} ت</span>
+                    </div>
+                    {renderRechartsSparkline(btcItem.sparkline, btcItem.dayChange >= 0, 68, 22)}
                   </div>
                 </div>
               )}
@@ -560,12 +768,12 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               {oilItem && (
                 <div
                   onClick={() => setSelectedItem(oilItem)}
-                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-cyan-500/30 transition-all"
+                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-cyan-500/30 transition-all flex flex-col items-center justify-between"
                 >
                   <div className="text-[10px] text-slate-400">نفت برنت</div>
                   <div className="text-xs font-black text-white font-mono mt-0.5">${fmtUsd(oilItem.priceUsd)}</div>
-                  <div className={`text-[9px] font-mono mt-0.5 ${oilItem.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {oilItem.dayChange >= 0 ? '+' : ''}{oilItem.dayChange}%
+                  <div className="mt-1">
+                    {renderChangeBadge(oilItem.dayChange, 'xs', true)}
                   </div>
                 </div>
               )}
@@ -573,12 +781,12 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               {goldOunceItem && (
                 <div
                   onClick={() => setSelectedItem(goldOunceItem)}
-                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-amber-500/30 transition-all"
+                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-amber-500/30 transition-all flex flex-col items-center justify-between"
                 >
                   <div className="text-[10px] text-slate-400">انس جهانی طلا</div>
                   <div className="text-xs font-black text-amber-300 font-mono mt-0.5">${fmtUsd(goldOunceItem.priceUsd)}</div>
-                  <div className={`text-[9px] font-mono mt-0.5 ${goldOunceItem.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {goldOunceItem.dayChange >= 0 ? '+' : ''}{goldOunceItem.dayChange}%
+                  <div className="mt-1">
+                    {renderChangeBadge(goldOunceItem.dayChange, 'xs', true)}
                   </div>
                 </div>
               )}
@@ -586,12 +794,12 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               {ethItem && (
                 <div
                   onClick={() => setSelectedItem(ethItem)}
-                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-indigo-500/30 transition-all"
+                  className="p-2 rounded-xl bg-slate-950/80 border border-slate-800/60 cursor-pointer hover:border-indigo-500/30 transition-all flex flex-col items-center justify-between"
                 >
                   <div className="text-[10px] text-slate-400">اتریوم (ETH)</div>
                   <div className="text-xs font-black text-indigo-300 font-mono mt-0.5">${fmtUsd(ethItem.priceUsd)}</div>
-                  <div className={`text-[9px] font-mono mt-0.5 ${ethItem.dayChange >= 0 ? 'text-emerald-400' : 'text-rose-400'}`}>
-                    {ethItem.dayChange >= 0 ? '+' : ''}{ethItem.dayChange}%
+                  <div className="mt-1">
+                    {renderChangeBadge(ethItem.dayChange, 'xs', true)}
                   </div>
                 </div>
               )}
@@ -619,7 +827,6 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
 
               <div className="space-y-2">
                 {topMovers.slice(0, 3).map((item) => {
-                  const isPositive = item.dayChange >= 0;
                   return (
                     <div
                       key={item.key}
@@ -627,32 +834,41 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                         triggerHaptic();
                         setSelectedItem(item);
                       }}
-                      className="p-3 rounded-2xl bg-slate-900/80 border border-slate-800/80 hover:border-cyan-500/30 flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all"
+                      className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all gap-2 ${
+                        isWhite
+                          ? 'bg-neutral-50/90 border-neutral-200 hover:border-neutral-300'
+                          : 'bg-slate-900/80 border border-slate-800/80 hover:border-cyan-500/30'
+                      }`}
                     >
-                      <div className="flex items-center gap-2.5">
+                      <div className="flex items-center gap-2.5 min-w-0 flex-1">
                         {renderCoinIcon(item.key || item.symbol, item.category, 32)}
-                        <div>
+                        <div className="min-w-0">
                           <div className="flex items-center gap-1.5">
-                            <span className="font-bold text-xs text-white">{item.persianName}</span>
-                            <span className="text-[10px] font-mono text-slate-400 px-1 rounded bg-slate-800/80">
+                            <span className={`font-bold text-xs truncate ${isWhite ? 'text-black' : 'text-white'}`}>{item.persianName}</span>
+                            <span className={`text-[10px] font-mono px-1 rounded ${
+                              isWhite ? 'bg-neutral-200 text-neutral-700' : 'bg-slate-800/80 text-slate-400'
+                            }`}>
                               {item.symbol}
                             </span>
                           </div>
-                          <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                          <div className={`text-[10px] font-mono mt-0.5 ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>
                             {item.priceUsd ? `$${fmtUsd(item.priceUsd)}` : 'نرخ داخلی'}
                           </div>
                         </div>
                       </div>
 
-                      <div className="text-left flex flex-col items-end">
-                        <div className="text-xs font-black text-white font-mono tracking-tight">
-                          {fmtNum(item.priceToman)} <span className="text-[9px] font-sans text-slate-400">تومان</span>
+                      {/* Middle Recharts 24h Trend Chart */}
+                      <div className="flex-shrink-0 flex items-center justify-center px-1">
+                        {renderRechartsSparkline(item.sparkline, item.dayChange >= 0, 64, 26)}
+                      </div>
+
+                      <div className="text-left flex flex-col items-end flex-shrink-0">
+                        <div className={`text-xs font-black font-mono tracking-tight ${isWhite ? 'text-black' : 'text-white'}`}>
+                          {fmtNum(item.priceToman)} <span className={`text-[9px] font-sans ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>تومان</span>
                         </div>
-                        <span className={`text-[10px] font-mono font-bold mt-0.5 px-1.5 py-0.2 rounded-md ${
-                          isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-                        }`}>
-                          {isPositive ? '+' : ''}{item.dayChange}%
-                        </span>
+                        <div className="mt-1">
+                          {renderChangeBadge(item.dayChange, 'sm', true)}
+                        </div>
                       </div>
                     </div>
                   );
@@ -758,21 +974,18 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                     >
                       <div className="flex items-center justify-between mb-2">
                         {renderCoinIcon(item.key || item.symbol, item.category, 28)}
-                        <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-lg ${
-                          isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-                        }`}>
-                          {isPositive ? '+' : ''}{item.dayChange}%
-                        </span>
+                        {renderChangeBadge(item.dayChange, 'sm', true)}
                       </div>
                       <div className="text-[11px] font-bold text-slate-300 truncate">{item.persianName}</div>
                       <div className="text-xs font-black text-white mt-1 font-mono tracking-tight">
                         {fmtNum(item.priceToman)} <span className="text-[9px] font-sans text-slate-400">تومان</span>
                       </div>
-                      {item.priceUsd !== undefined && item.category !== 'fiat' && (
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
-                          ${fmtUsd(item.priceUsd)}
+                      <div className="mt-2 pt-1 border-t border-slate-800/80 flex items-center justify-between">
+                        <div className="text-[10px] text-slate-400 font-mono">
+                          {item.priceUsd !== undefined && item.category !== 'fiat' ? `$${fmtUsd(item.priceUsd)}` : '۲۴س'}
                         </div>
-                      )}
+                        {renderRechartsSparkline(item.sparkline, isPositive, 56, 20)}
+                      </div>
                     </div>
                   );
                 })}
@@ -833,46 +1046,50 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       triggerHaptic();
                       setSelectedItem(item);
                     }}
-                    className="p-3 rounded-2xl bg-slate-900/70 border border-slate-800/80 hover:border-cyan-500/30 flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all"
+                    className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer active:scale-[0.98] transition-all gap-2 ${
+                      isWhite
+                        ? 'bg-neutral-50/90 border-neutral-200 hover:border-neutral-300'
+                        : 'bg-slate-900/70 border-slate-800/80 hover:border-cyan-500/30'
+                    }`}
                   >
                     {/* Left Icon & Names */}
-                    <div className="flex items-center gap-2.5 min-w-0">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       {renderCoinIcon(item.key || item.symbol, item.category, 36)}
                       <div className="min-w-0">
                         <div className="flex items-center gap-1.5">
-                          <span className="font-bold text-xs text-white truncate">{item.persianName}</span>
-                          <span className="text-[10px] font-mono text-slate-400 font-semibold px-1 rounded bg-slate-800/80">
+                          <span className={`font-bold text-xs truncate ${isWhite ? 'text-black' : 'text-white'}`}>{item.persianName}</span>
+                          <span className={`text-[10px] font-mono font-semibold px-1 rounded ${
+                            isWhite ? 'bg-neutral-200 text-neutral-700' : 'bg-slate-800/80 text-slate-400'
+                          }`}>
                             {item.symbol}
                           </span>
                         </div>
-                        <div className="text-[10px] text-slate-400 font-mono mt-0.5">
+                        <div className={`text-[10px] font-mono mt-0.5 ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>
                           {item.priceUsd ? `$${fmtUsd(item.priceUsd)}` : item.name}
                         </div>
                       </div>
                     </div>
 
-                    {/* Middle Sparkline */}
-                    <div className="hidden sm:block">
-                      {renderSparklineSvg(item.sparkline, isPositive)}
+                    {/* Middle Recharts 24h Trend Chart */}
+                    <div className="flex-shrink-0 flex items-center justify-center px-1">
+                      {renderRechartsSparkline(item.sparkline, isPositive, 68, 28)}
                     </div>
 
                     {/* Right Prices & Change */}
-                    <div className="text-left flex items-center gap-2.5">
+                    <div className="text-left flex items-center gap-2 flex-shrink-0">
                       <div className="flex flex-col items-end">
-                        <div className="text-xs font-black text-white font-mono tracking-tight">
-                          {fmtNum(item.priceToman)} <span className="text-[9px] font-sans text-slate-400">تومان</span>
+                        <div className={`text-xs font-black font-mono tracking-tight ${isWhite ? 'text-black' : 'text-white'}`}>
+                          {fmtNum(item.priceToman)} <span className={`text-[9px] font-sans ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>تومان</span>
                         </div>
-                        <span className={`text-[10px] font-mono font-bold mt-0.5 px-1.5 py-0.2 rounded-md ${
-                          isPositive ? 'bg-emerald-500/10 text-emerald-400' : 'bg-rose-500/10 text-rose-400'
-                        }`}>
-                          {isPositive ? '+' : ''}{item.dayChange}%
-                        </span>
+                        <div className="mt-0.5">
+                          {renderChangeBadge(item.dayChange, 'sm', true)}
+                        </div>
                       </div>
 
                       <button
                         onClick={(e) => toggleFavorite(item.key, e)}
                         className={`p-1.5 rounded-lg active:scale-90 transition-all ${
-                          isFav ? 'text-amber-400' : 'text-slate-600 hover:text-slate-400'
+                          isFav ? 'text-amber-400' : isWhite ? 'text-neutral-400 hover:text-black' : 'text-slate-600 hover:text-slate-400'
                         }`}
                       >
                         <Star className="w-4 h-4 fill-current" />
@@ -992,29 +1209,39 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                       triggerHaptic();
                       setSelectedItem(item);
                     }}
-                    className="p-3.5 rounded-2xl bg-slate-900 border border-slate-800 flex items-center justify-between cursor-pointer active:scale-95 transition-all shadow-md"
+                    className={`p-3.5 rounded-2xl border flex items-center justify-between cursor-pointer active:scale-95 transition-all shadow-md gap-2 ${
+                      isWhite
+                        ? 'bg-neutral-50/90 border-neutral-200 hover:border-neutral-300'
+                        : 'bg-slate-900 border border-slate-800 hover:border-cyan-500/30'
+                    }`}
                   >
-                    <div className="flex items-center gap-2.5">
+                    <div className="flex items-center gap-2.5 min-w-0 flex-1">
                       {renderCoinIcon(item.key || item.symbol, item.category, 36)}
-                      <div>
-                        <div className="font-bold text-xs text-white">{item.persianName}</div>
-                        <div className="text-[10px] font-mono text-slate-400">{item.symbol}</div>
+                      <div className="min-w-0">
+                        <div className={`font-bold text-xs truncate ${isWhite ? 'text-black' : 'text-white'}`}>{item.persianName}</div>
+                        <div className={`text-[10px] font-mono ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>{item.symbol}</div>
                       </div>
                     </div>
-                    <div className="text-left flex items-center gap-3">
-                      <div>
-                        <div className="text-xs font-black text-white font-mono">
-                          {fmtNum(item.priceToman)} <span className="text-[9px] font-sans text-slate-400">تومان</span>
+
+                    {/* Middle Recharts 24h Trend Chart */}
+                    <div className="flex-shrink-0 flex items-center justify-center px-1">
+                      {renderRechartsSparkline(item.sparkline, isPositive, 68, 28)}
+                    </div>
+
+                    <div className="text-left flex items-center gap-2.5 flex-shrink-0">
+                      <div className="flex flex-col items-end">
+                        <div className={`text-xs font-black font-mono ${isWhite ? 'text-black' : 'text-white'}`}>
+                          {fmtNum(item.priceToman)} <span className={`text-[9px] font-sans ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>تومان</span>
                         </div>
-                        <span className={`text-[10px] font-mono font-bold ${
-                          isPositive ? 'text-emerald-400' : 'text-rose-400'
-                        }`}>
-                          {isPositive ? '+' : ''}{item.dayChange}%
-                        </span>
+                        <div className="mt-0.5">
+                          {renderChangeBadge(item.dayChange, 'sm', true)}
+                        </div>
                       </div>
                       <button
                         onClick={(e) => toggleFavorite(item.key, e)}
-                        className="text-amber-400 p-1 active:scale-90"
+                        className={`p-1.5 rounded-lg active:scale-90 transition-all ${
+                          favorites.includes(item.key) ? 'text-amber-400' : isWhite ? 'text-neutral-400 hover:text-black' : 'text-slate-600 hover:text-slate-400'
+                        }`}
                       >
                         <Star className="w-4 h-4 fill-current" />
                       </button>
@@ -1030,63 +1257,64 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
       {/* 5. INTERACTIVE DETAIL BOTTOM SHEET MODAL */}
       {selectedItem && (
         <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-md flex items-end justify-center p-0 animate-fadeIn">
-          <div className="w-full max-w-md bg-[#0C121E] border-t border-slate-700/80 rounded-t-3xl p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto">
+          <div className={`w-full max-w-md ${isWhite ? 'bg-white text-black border-neutral-200' : 'bg-[#0C121E] text-white border-slate-700/80'} border-t rounded-t-3xl p-5 space-y-4 shadow-2xl max-h-[90vh] overflow-y-auto`}>
             
             {/* Modal Header */}
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+            <div className={`flex items-center justify-between border-b ${isWhite ? 'border-neutral-200' : 'border-slate-800'} pb-3`}>
               <div className="flex items-center gap-2.5">
                 {renderCoinIcon(selectedItem.key || selectedItem.symbol, selectedItem.category, 42)}
                 <div>
                   <div className="flex items-center gap-1.5">
-                    <h3 className="font-black text-sm text-white">{selectedItem.persianName}</h3>
-                    <span className="text-xs font-mono font-bold text-cyan-400 px-1.5 py-0.5 rounded bg-cyan-950/60 border border-cyan-800/40">
+                    <h3 className={`font-black text-sm ${isWhite ? 'text-black' : 'text-white'}`}>{selectedItem.persianName}</h3>
+                    <span className="text-xs font-mono font-bold text-cyan-600 px-1.5 py-0.5 rounded bg-cyan-500/10 border border-cyan-500/30">
                       {selectedItem.symbol}
                     </span>
                   </div>
-                  <span className="text-[11px] text-slate-400">{selectedItem.name}</span>
+                  <span className={`text-[11px] ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>{selectedItem.name}</span>
                 </div>
               </div>
 
               <button
                 onClick={() => setSelectedItem(null)}
-                className="w-8 h-8 rounded-full bg-slate-900 border border-slate-800 flex items-center justify-center text-slate-400 hover:text-white active:scale-95"
+                className={`w-8 h-8 rounded-full border flex items-center justify-center active:scale-95 ${
+                  isWhite ? 'bg-neutral-100 border-neutral-300 text-neutral-600 hover:text-black' : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-white'
+                }`}
               >
                 <X className="w-4 h-4" />
               </button>
             </div>
 
             {/* Price Banner */}
-            <div className="p-4 rounded-2xl bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border border-slate-800 flex items-center justify-between">
+            <div className={`p-4 rounded-2xl border flex items-center justify-between ${
+              isWhite
+                ? 'bg-neutral-50 border-neutral-200 shadow-sm'
+                : 'bg-gradient-to-r from-slate-900 via-slate-900/90 to-slate-950 border border-slate-800'
+            }`}>
               <div>
-                <span className="text-[10px] text-slate-400 block">نرخ لحظه‌ای به تومان:</span>
-                <div className="text-xl font-black text-white font-mono mt-0.5 tracking-tight">
-                  {fmtNum(selectedItem.priceToman)} <span className="text-xs font-sans text-slate-400">تومان</span>
+                <span className={`text-[10px] block ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>نرخ لحظه‌ای به تومان:</span>
+                <div className={`text-xl font-black font-mono mt-0.5 tracking-tight ${isWhite ? 'text-neutral-900' : 'text-white'}`}>
+                  {fmtNum(selectedItem.priceToman)} <span className={`text-xs font-sans ${isWhite ? 'text-neutral-500' : 'text-slate-400'}`}>تومان</span>
                 </div>
                 {selectedItem.priceUsd && (
-                  <div className="text-xs font-mono text-cyan-300 mt-0.5">
+                  <div className="text-xs font-mono text-cyan-600 font-bold mt-0.5">
                     ≈ ${fmtUsd(selectedItem.priceUsd)} USD
                   </div>
                 )}
               </div>
 
-              <div className="text-left">
-                <span className={`text-xs font-black px-2 py-1 rounded-xl flex items-center gap-1 font-mono ${
-                  selectedItem.dayChange >= 0
-                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'
-                    : 'bg-rose-500/10 text-rose-400 border border-rose-500/20'
-                }`}>
-                  {selectedItem.dayChange >= 0 ? <TrendingUp className="w-3.5 h-3.5" /> : <TrendingDown className="w-3.5 h-3.5" />}
-                  <span>{selectedItem.dayChange >= 0 ? '+' : ''}{selectedItem.dayChange}%</span>
-                </span>
-                <span className="text-[10px] text-slate-500 block mt-1">تغییرات ۲۴ ساعته</span>
+              <div className="text-left flex flex-col items-end">
+                {renderChangeBadge(selectedItem.dayChange, 'md', true)}
+                <span className={`text-[10px] block mt-1 ${isWhite ? 'text-neutral-500' : 'text-slate-500'}`}>تغییرات ۲۴ ساعته</span>
               </div>
             </div>
 
             {/* 24h High & Low Range Bar */}
-            <div className="space-y-1.5 p-3 rounded-xl bg-slate-950/60 border border-slate-900">
-              <div className="flex items-center justify-between text-[11px] text-slate-400">
-                <span>کمترین: <b className="text-white font-mono">{fmtNum(selectedItem.lowToman)}</b></span>
-                <span>بیشترین: <b className="text-white font-mono">{fmtNum(selectedItem.highToman)}</b></span>
+            <div className={`space-y-1.5 p-3 rounded-xl border ${
+              isWhite ? 'bg-neutral-100 border-neutral-200' : 'bg-slate-950/60 border border-slate-900'
+            }`}>
+              <div className={`flex items-center justify-between text-[11px] ${isWhite ? 'text-neutral-600' : 'text-slate-400'}`}>
+                <span>کمترین: <b className={`font-mono ${isWhite ? 'text-neutral-900' : 'text-white'}`}>{fmtNum(selectedItem.lowToman)}</b></span>
+                <span>بیشترین: <b className={`font-mono ${isWhite ? 'text-neutral-900' : 'text-white'}`}>{fmtNum(selectedItem.highToman)}</b></span>
               </div>
               <div className="w-full h-2 rounded-full bg-slate-800 overflow-hidden flex">
                 <div className="h-full bg-gradient-to-r from-rose-500 via-amber-400 to-emerald-400 rounded-full w-full"></div>
@@ -1115,13 +1343,11 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
                 </div>
               </div>
 
-              {/* Graphic Chart Box */}
-              <div className="rounded-2xl p-4 bg-slate-950/90 border border-slate-800 flex items-center justify-center">
-                <img
-                  src={`/api/bot/card-preview?symbol=${encodeURIComponent(selectedItem.symbol)}&t=${Date.now()}`}
-                  alt="Chart Preview"
-                  className="w-full h-auto rounded-xl shadow-lg"
-                />
+              {/* Interactive Recharts Chart Box */}
+              <div className={`rounded-2xl p-3 border ${
+                isWhite ? 'bg-neutral-50 border-neutral-200' : 'bg-slate-950/90 border-slate-800'
+              }`}>
+                {renderDetailRechartsChart(selectedItem)}
               </div>
             </div>
 
@@ -1148,7 +1374,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
       )}
 
       {/* 6. BOTTOM FLOATING NAVIGATION BAR (TELEGRAM MINI-APP STYLE) */}
-      <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 bg-[#0A0E17]/95 backdrop-blur-2xl border-t border-slate-800/80 px-2 py-2">
+      <nav className={`fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 ${
+        isWhite ? 'bg-white/95 border-t border-neutral-200 shadow-xl' : 'bg-[#0A0E17]/95 border-t border-slate-800/80'
+      } backdrop-blur-2xl px-2 py-2 transition-colors duration-200`}>
         <div className="flex items-center justify-around">
           
           {/* Tab 1: Index / Home */}
@@ -1158,7 +1386,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               setActiveNav('index');
             }}
             className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl transition-all ${
-              activeNav === 'index' ? 'text-cyan-400 scale-105' : 'text-slate-500 hover:text-slate-300'
+              activeNav === 'index'
+                ? isWhite ? 'text-cyan-700 font-extrabold scale-105' : 'text-cyan-400 scale-105'
+                : isWhite ? 'text-neutral-500 hover:text-black' : 'text-slate-500 hover:text-slate-300'
             }`}
           >
             <Home className="w-5 h-5" />
@@ -1172,7 +1402,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               setActiveNav('markets');
             }}
             className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl transition-all ${
-              activeNav === 'markets' ? 'text-cyan-400 scale-105' : 'text-slate-500 hover:text-slate-300'
+              activeNav === 'markets'
+                ? isWhite ? 'text-cyan-700 font-extrabold scale-105' : 'text-cyan-400 scale-105'
+                : isWhite ? 'text-neutral-500 hover:text-black' : 'text-slate-500 hover:text-slate-300'
             }`}
           >
             <TrendingUp className="w-5 h-5" />
@@ -1186,7 +1418,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               setActiveNav('converter');
             }}
             className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl transition-all ${
-              activeNav === 'converter' ? 'text-cyan-400 scale-105' : 'text-slate-500 hover:text-slate-300'
+              activeNav === 'converter'
+                ? isWhite ? 'text-cyan-700 font-extrabold scale-105' : 'text-cyan-400 scale-105'
+                : isWhite ? 'text-neutral-500 hover:text-black' : 'text-slate-500 hover:text-slate-300'
             }`}
           >
             <ArrowRightLeft className="w-5 h-5" />
@@ -1200,7 +1434,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
               setActiveNav('watchlist');
             }}
             className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl transition-all ${
-              activeNav === 'watchlist' ? 'text-amber-400 scale-105' : 'text-slate-500 hover:text-slate-300'
+              activeNav === 'watchlist'
+                ? isWhite ? 'text-amber-600 font-extrabold scale-105' : 'text-amber-400 scale-105'
+                : isWhite ? 'text-neutral-500 hover:text-black' : 'text-slate-500 hover:text-slate-300'
             }`}
           >
             <Star className={`w-5 h-5 ${activeNav === 'watchlist' ? 'fill-current' : ''}`} />
@@ -1213,7 +1449,9 @@ export const MiniAppView: React.FC<MiniAppViewProps> = ({ onBackToDashboard, isS
             target="_blank"
             rel="noreferrer"
             onClick={triggerHaptic}
-            className="flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl text-slate-500 hover:text-cyan-400 transition-all"
+            className={`flex flex-col items-center gap-1 py-1 px-2.5 rounded-2xl ${
+              isWhite ? 'text-neutral-500 hover:text-cyan-600' : 'text-slate-500 hover:text-cyan-400'
+            } transition-all`}
           >
             <ExternalLink className="w-5 h-5" />
             <span className="text-[10px] font-bold">کانال</span>

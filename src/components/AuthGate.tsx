@@ -22,25 +22,12 @@ export const AuthGate: React.FC<{ children: React.ReactNode }> = ({ children }) 
   }, []);
 
   useEffect(() => {
-    if (!isMiniApp) check();
+    if (!isMiniApp) {
+      check();
+      const interval = setInterval(check, 60000);
+      return () => clearInterval(interval);
+    }
   }, [isMiniApp, check]);
-
-  // If the session expires while the panel is open, drop back to the login page.
-  useEffect(() => {
-    if (isMiniApp) return;
-    const original = window.fetch;
-    window.fetch = async (...args: Parameters<typeof fetch>) => {
-      const res = await original(...args);
-      const url = typeof args[0] === 'string' ? args[0] : (args[0] as Request).url || '';
-      if (res.status === 401 && url.startsWith('/api/') && !url.startsWith('/api/auth/')) {
-        setState('login');
-      }
-      return res;
-    };
-    return () => {
-      window.fetch = original;
-    };
-  }, [isMiniApp]);
 
   const logout = async () => {
     try {

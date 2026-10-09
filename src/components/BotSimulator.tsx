@@ -70,39 +70,41 @@ export const BotSimulator: React.FC<BotSimulatorProps> = ({ onSimulateMessage })
     setLoading(true);
 
     try {
-      const fromId = isAdminMode ? 0 : 99988877;
+      const fromId = isAdminMode ? 999999999 : 99988877;
       const res = await onSimulateMessage(query, fromId, isGroupMode);
       const botResponseText = res?.result?.responseText || '';
 
       if (botResponseText) {
         // Determine if inline buttons should appear
-        let buttons: any = undefined;
-        if (query === '/admin' && isAdminMode) {
-          buttons = [
-            [{ text: '📊 آمار', callback_data: 'stats' }],
-            [
-              { text: '🔄 فوروارد', callback_data: 'forward' },
-              { text: '📢 همگانی', callback_data: 'broadcast' },
-            ],
-            [
-              { text: '✅ آنبلاک', callback_data: 'unblock' },
-              { text: '🚫 بلاک', callback_data: 'block' },
-            ],
-            [
-              { text: '🔴 خاموش', callback_data: 'disable' },
-              { text: '🟢 روشن', callback_data: 'enable' },
-            ],
-            [{ text: '📁 لیست گروه‌ها', callback_data: 'list_groups' }],
-          ];
-        } else {
-          buttons = [
-            [
-              {
-                text: '➕ اضافه کردن به گروه',
-                url: 'https://t.me/Modasr_Arzbot?startgroup=start',
-              },
-            ],
-          ];
+        let buttons: any = res?.result?.replyMarkup?.inline_keyboard || res?.replyMarkup?.inline_keyboard;
+        if (!buttons) {
+          if (query === '/admin' && isAdminMode) {
+            buttons = [
+              [{ text: '📊 آمار', callback_data: 'stats' }],
+              [
+                { text: '🔄 فوروارد', callback_data: 'forward' },
+                { text: '📢 همگانی', callback_data: 'broadcast' },
+              ],
+              [
+                { text: '✅ آنبلاک', callback_data: 'unblock' },
+                { text: '🚫 بلاک', callback_data: 'block' },
+              ],
+              [
+                { text: '🔴 خاموش', callback_data: 'disable' },
+                { text: '🟢 روشن', callback_data: 'enable' },
+              ],
+              [{ text: '📁 لیست گروه‌ها', callback_data: 'list_groups' }],
+            ];
+          } else {
+            buttons = [
+              [
+                {
+                  text: '➕ اضافه کردن به گروه',
+                  url: 'https://t.me/Modasr_Arzbot?startgroup=start',
+                },
+              ],
+            ];
+          }
         }
 
         const botTime = new Date().toLocaleTimeString('fa-IR', { hour: '2-digit', minute: '2-digit' });

@@ -15,7 +15,14 @@ import {
   AlertCircle,
   X,
   FileJson,
+  Menu,
+  Sparkles,
+  Sun,
+  Moon,
+  Zap,
 } from 'lucide-react';
+import { NavigationDrawer } from './NavigationDrawer';
+import { useTheme } from '../context/ThemeContext';
 
 interface HeaderProps {
   botInfo: any;
@@ -38,6 +45,12 @@ export const Header: React.FC<HeaderProps> = ({
 }) => {
   const isWebhookSet = !!(webhookInfo?.result?.url && webhookInfo.result.url.length > 0);
   const botUsername = botInfo?.result?.username || 'Modasr_Arzbot';
+
+  // Theme context
+  const { theme, toggleTheme, isWhite } = useTheme();
+
+  // Navigation Drawer state
+  const [isDrawerOpen, setIsDrawerOpen] = useState(false);
 
   // Backup modal state
   const [isBackupModalOpen, setIsBackupModalOpen] = useState(false);
@@ -112,11 +125,12 @@ export const Header: React.FC<HeaderProps> = ({
     { id: 'prices', label: 'تابلوی زنده قیمت‌ها', icon: RefreshCw },
     { id: 'miniapp', label: '📱 mini MODASR arz', icon: Smartphone },
     { id: 'admin', label: 'آمار و مدیریت ادمین', icon: ShieldCheck },
+    { id: 'apis', label: '⚡ مرکز جامع APIها', icon: Zap },
     { id: 'logs', label: 'لاگ رویدادها', icon: Bot },
   ];
 
   return (
-    <header className="border-b border-slate-800 bg-slate-900/80 backdrop-blur-md sticky top-0 z-40">
+    <header className={`border-b ${isWhite ? 'border-neutral-200 bg-white/95 text-black shadow-sm' : 'border-slate-800 bg-slate-900/80 text-white'} backdrop-blur-md sticky top-0 z-40 transition-colors duration-200`}>
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
         <div className="flex flex-col md:flex-row items-center justify-between py-4 gap-4">
           
@@ -127,7 +141,7 @@ export const Header: React.FC<HeaderProps> = ({
                 <Bot className="w-6 h-6 text-white" />
               </div>
               <span
-                className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 border-slate-900 ${
+                className={`absolute -bottom-1 -right-1 w-4 h-4 rounded-full border-2 ${isWhite ? 'border-white' : 'border-slate-900'} ${
                   botStatus ? 'bg-emerald-500 animate-pulse' : 'bg-rose-500'
                 }`}
                 title={botStatus ? 'ربات فعال است' : 'ربات خاموش است'}
@@ -136,19 +150,19 @@ export const Header: React.FC<HeaderProps> = ({
 
             <div>
               <div className="flex items-center gap-2">
-                <h1 className="text-lg font-bold text-white tracking-wide">
+                <h1 className={`text-lg font-bold ${isWhite ? 'text-black' : 'text-white'} tracking-wide`}>
                   ربات تلگرام ارز و طلا
                 </h1>
-                <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 font-mono">
+                <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/20 font-mono font-bold">
                   v2.0 Webhook
                 </span>
               </div>
-              <div className="flex items-center gap-3 text-xs text-slate-400 mt-0.5">
+              <div className={`flex items-center gap-3 text-xs ${isWhite ? 'text-neutral-800' : 'text-slate-400'} mt-0.5`}>
                 <a
                   href={`https://t.me/${botUsername}`}
                   target="_blank"
                   rel="noreferrer"
-                  className="hover:text-cyan-400 flex items-center gap-1 transition-colors font-mono font-medium"
+                  className={`${isWhite ? 'text-neutral-900 hover:text-cyan-700 font-bold' : 'text-slate-400 hover:text-cyan-400'} flex items-center gap-1 transition-colors font-mono`}
                 >
                   @{botUsername}
                   <ExternalLink className="w-3 h-3" />
@@ -156,12 +170,12 @@ export const Header: React.FC<HeaderProps> = ({
                 <span>•</span>
                 <span className="flex items-center gap-1">
                   {isWebhookSet ? (
-                    <span className="text-emerald-400 flex items-center gap-1">
+                    <span className={`${isWhite ? 'text-emerald-800 font-bold' : 'text-emerald-500 font-medium'} flex items-center gap-1`}>
                       <span className="w-2 h-2 rounded-full bg-emerald-500" />
                       وبهوک متصل
                     </span>
                   ) : (
-                    <span className="text-amber-400 flex items-center gap-1">
+                    <span className={`${isWhite ? 'text-amber-800 font-bold' : 'text-amber-500 font-medium'} flex items-center gap-1`}>
                       <span className="w-2 h-2 rounded-full bg-amber-500" />
                       در انتظار تنظیم وبهوک
                     </span>
@@ -171,65 +185,77 @@ export const Header: React.FC<HeaderProps> = ({
             </div>
           </div>
 
-          {/* Actions & Refresh */}
-          <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
-            {/* Backup & Restore Button */}
-            <button
-              onClick={() => {
-                setBackupFeedback(null);
-                setIsBackupModalOpen(true);
-              }}
-              className="px-3.5 py-2 rounded-xl bg-purple-950/60 hover:bg-purple-900/80 text-purple-300 hover:text-white border border-purple-800/50 text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 shadow-sm"
-              title="پشتیبان‌گیری و بازیابی اطلاعات و تنظیمات ربات"
-            >
-              <Database className="w-3.5 h-3.5 text-purple-400" />
-              <span>💾 بک‌آپ و بازیابی</span>
-            </button>
+          {/* Actions: Active section indicator and ONLY Drawer button */}
+          <div className="flex items-center gap-2.5 w-full md:w-auto justify-end">
+            {/* Current Active Section Badge */}
+            {(() => {
+              const currentTab = navItems.find((n) => n.id === activeTab) || navItems[0];
+              const CurrentIcon = currentTab.icon;
+              return (
+                <div
+                  className={`hidden sm:flex items-center gap-1.5 px-3 py-2 rounded-xl border ${
+                    isWhite
+                      ? 'bg-neutral-100 border-neutral-300 text-neutral-900'
+                      : 'bg-slate-800/80 border-slate-700 text-slate-200'
+                  } text-xs font-bold`}
+                >
+                  <CurrentIcon className="w-4 h-4 text-cyan-500 shrink-0" />
+                  <span>بخش جاری: {currentTab.label}</span>
+                </div>
+              );
+            })()}
 
-            <button
-              onClick={onRefresh}
-              disabled={loading}
-              className="px-3.5 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-200 text-xs font-medium flex items-center gap-2 border border-slate-700 transition-all active:scale-95 disabled:opacity-50"
-              title="بروزرسانی وضعیت"
-            >
-              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin text-cyan-400' : ''}`} />
-              <span>بروزرسانی وضعیت</span>
-            </button>
-
+            {/* Direct Project ZIP Download Button */}
             <a
-              href={`https://t.me/${botUsername}?start=start`}
-              target="_blank"
-              rel="noreferrer"
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-md shadow-cyan-600/20 transition-all active:scale-95"
+              href="/api/download-zip"
+              download="modasr-arz-project.zip"
+              className={`px-3.5 py-2.5 rounded-2xl text-xs font-bold flex items-center gap-2 transition-all active:scale-95 shadow-md border ${
+                isWhite
+                  ? 'bg-emerald-50 hover:bg-emerald-100 text-emerald-950 border-emerald-500/40 shadow-emerald-500/10'
+                  : 'bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 hover:text-white border border-emerald-500/40 shadow-emerald-500/10'
+              }`}
+              title="دانلود فایل زیپ کامل پروژه برای گیت‌هاب"
             >
-              <Send className="w-3.5 h-3.5" />
-              <span>باز کردن در تلگرام</span>
+              <Download className="w-4 h-4 text-emerald-400" />
+              <span className="hidden sm:inline">دانلود ZIP پروژه 📦</span>
+              <span className="sm:hidden">ZIP 📦</span>
             </a>
+
+            {/* Drawer Button (کشو / دسترسی به تمام بخش‌ها، تنظیمات و ابزارها) */}
+            <button
+              onClick={() => setIsDrawerOpen(true)}
+              className={`px-4 py-2.5 rounded-2xl text-xs font-black flex items-center gap-2.5 transition-all active:scale-95 shadow-md border ${
+                isWhite
+                  ? 'bg-amber-50 hover:bg-amber-100/90 text-neutral-950 border-2 border-amber-500/60 shadow-amber-500/10 ring-1 ring-amber-500/20'
+                  : 'bg-gradient-to-r from-amber-500/25 via-cyan-500/20 to-purple-500/20 hover:from-amber-500/35 hover:to-purple-500/35 text-amber-300 hover:text-white border border-amber-500/40 shadow-amber-500/10'
+              }`}
+              title="باز کردن منوی کشویی و دسترسی سریع به تمام بخش‌ها"
+            >
+              <Menu className={`w-5 h-5 ${isWhite ? 'text-amber-600 stroke-[2.5]' : 'text-amber-400'}`} />
+              <span className={`text-sm font-black ${isWhite ? 'text-neutral-950' : 'text-amber-300'}`}>
+                منوی کشویی (کشو) 📑
+              </span>
+            </button>
           </div>
         </div>
-
-        {/* Navigation Tabs */}
-        <div className="flex items-center gap-1 overflow-x-auto py-2 border-t border-slate-800/80 no-scrollbar">
-          {navItems.map((item) => {
-            const Icon = item.icon;
-            const isActive = activeTab === item.id;
-            return (
-              <button
-                key={item.id}
-                onClick={() => setActiveTab(item.id)}
-                className={`px-3.5 py-2 rounded-xl text-xs font-medium flex items-center gap-2 transition-all whitespace-nowrap ${
-                  isActive
-                    ? 'bg-cyan-500/15 text-cyan-400 border border-cyan-500/30 shadow-sm'
-                    : 'text-slate-400 hover:text-slate-200 hover:bg-slate-800/60 border border-transparent'
-                }`}
-              >
-                <Icon className={`w-4 h-4 ${isActive ? 'text-cyan-400' : 'text-slate-400'}`} />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </div>
       </div>
+
+      {/* Navigation Drawer (کشو) */}
+      <NavigationDrawer
+        isOpen={isDrawerOpen}
+        onClose={() => setIsDrawerOpen(false)}
+        activeTab={activeTab}
+        setActiveTab={setActiveTab}
+        botInfo={botInfo}
+        webhookInfo={webhookInfo}
+        botStatus={botStatus}
+        onRefresh={onRefresh}
+        onOpenBackup={() => {
+          setBackupFeedback(null);
+          setIsBackupModalOpen(true);
+        }}
+        loading={loading}
+      />
 
       {/* Backup & Restore Modal */}
       {isBackupModalOpen && (
@@ -343,6 +369,30 @@ export const Header: React.FC<HeaderProps> = ({
                   <span>{restoring ? 'در حال بازیابی...' : 'بازیابی از کد متنی'}</span>
                 </button>
               </div>
+            </div>
+
+            {/* Step 3: Complete Project Source ZIP for GitHub */}
+            <div className="p-4 rounded-2xl bg-slate-950/80 border border-emerald-500/30 space-y-3">
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-2">
+                  <Download className="w-4 h-4 text-emerald-400" />
+                  <span className="text-xs font-bold text-white">۳. دریافت سورس‌کد کامل پروژه برای گیت‌هاب (Full Project ZIP)</span>
+                </div>
+                <span className="text-[10px] px-2 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 font-mono">
+                  ZIP Package
+                </span>
+              </div>
+              <p className="text-[11px] text-slate-400 leading-relaxed">
+                بسته کامل شامل کدهای سرور Express، فرانت‌اند React، استایل‌ها، انواع TypeScript، دیتابیس داده‌ها و تنظیمات، بدون وابستگی‌های اضافی و آماده آپلود در گیت‌هاب.
+              </p>
+              <a
+                href="/api/download-zip"
+                download="modasr-arz-project.zip"
+                className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-600 to-teal-600 hover:from-emerald-500 hover:to-teal-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 transition-all active:scale-95"
+              >
+                <Download className="w-4 h-4" />
+                <span>📦 دانلود مستقیم سورس‌کد کامل پروژه (modasr-arz-project.zip)</span>
+              </a>
             </div>
 
             {/* Modal Footer */}

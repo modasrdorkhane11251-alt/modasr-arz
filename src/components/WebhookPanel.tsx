@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Link2,
   CheckCircle,
@@ -17,7 +17,23 @@ import {
   Zap,
   Pause,
   RefreshCw,
+  Activity,
+  Wifi,
+  WifiOff,
+  Clock,
+  Gauge,
 } from 'lucide-react';
+import { useTheme } from '../context/ThemeContext';
+
+export interface LatencyTestResult {
+  latencyMs: number;
+  status: 'connected' | 'error';
+  httpStatus?: number;
+  testedAt: string;
+  serverTimestamp?: number;
+  uptime?: number;
+  errorMessage?: string;
+}
 
 interface WebhookPanelProps {
   statusData: any;
@@ -40,6 +56,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
   activeToken,
   setActiveToken,
 }) => {
+  const { isWhite } = useTheme();
   const [customUrl, setCustomUrl] = useState<string>('');
   const [dropPending, setDropPending] = useState<boolean>(true);
   const [settingWebhook, setSettingWebhook] = useState<boolean>(false);
@@ -47,6 +64,67 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
   const [pollingLoading, setPollingLoading] = useState<boolean>(false);
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
+
+  // Real-time Latency (Ping) test state using Fetch API
+  const [isTestingLatency, setIsTestingLatency] = useState<boolean>(false);
+  const [latencyResult, setLatencyResult] = useState<LatencyTestResult | null>(null);
+
+  const testServerLatency = async () => {
+    setIsTestingLatency(true);
+    const startTime = performance.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+    try {
+      const response = await fetch(`/api/ping?_t=${Date.now()}`, {
+        method: 'GET',
+        headers: {
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache',
+        },
+        signal: controller.signal,
+      });
+      clearTimeout(timeoutId);
+      const duration = Math.round(performance.now() - startTime);
+
+      if (response.ok) {
+        const data = await response.json();
+        setLatencyResult({
+          latencyMs: duration,
+          status: 'connected',
+          httpStatus: response.status,
+          testedAt: new Date().toLocaleTimeString('fa-IR'),
+          serverTimestamp: data.timestamp,
+          uptime: data.uptime,
+        });
+      } else {
+        setLatencyResult({
+          latencyMs: duration,
+          status: 'error',
+          httpStatus: response.status,
+          testedAt: new Date().toLocaleTimeString('fa-IR'),
+          errorMessage: `پاسخ ناموفق سرور: HTTP ${response.status} ${response.statusText || ''}`,
+        });
+      }
+    } catch (err: any) {
+      clearTimeout(timeoutId);
+      const duration = Math.round(performance.now() - startTime);
+      const isTimeout = err.name === 'AbortError';
+      setLatencyResult({
+        latencyMs: duration,
+        status: 'error',
+        testedAt: new Date().toLocaleTimeString('fa-IR'),
+        errorMessage: isTimeout ? 'تایم‌اوت پاسخ سرور (۶ ثانیه)' : (err.message || 'خطا در برقراری ارتباط با سرور'),
+      });
+    } finally {
+      setIsTestingLatency(false);
+    }
+  };
+
+  // Perform initial latency check on component mount
+  useEffect(() => {
+    testServerLatency();
+  }, []);
 
   const defaultWebhookUrl = statusData?.defaultWebhookUrl || '';
   const webhookResult = statusData?.webhookInfo?.result;
@@ -204,6 +282,35 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-center">
+            {/* Quick Latency Test Button with Colored Indicator */}
+            <button
+              type="button"
+              onClick={testServerLatency}
+              disabled={isTestingLatency}
+              title="تست در لحظه تاخیر سرور با Fetch API"
+              className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 ${
+                latencyResult?.status === 'connected'
+                  ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30 shadow-sm'
+                  : latencyResult?.status === 'error'
+                  ? 'bg-rose-500/15 hover:bg-rose-500/25 text-rose-300 border-rose-500/30 shadow-sm'
+                  : 'bg-slate-800/90 hover:bg-slate-700 text-slate-300 border-slate-700'
+              }`}
+            >
+              <Activity className={`w-3.5 h-3.5 ${isTestingLatency ? 'animate-spin' : ''}`} />
+              <span className="font-mono">
+                {isTestingLatency ? 'در حال پینگ...' : latencyResult ? `${latencyResult.latencyMs} ms` : 'تست تاخیر'}
+              </span>
+              <span
+                className={`w-2 h-2 rounded-full ${
+                  latencyResult?.status === 'connected'
+                    ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.8)]'
+                    : latencyResult?.status === 'error'
+                    ? 'bg-rose-500 shadow-[0_0_8px_rgba(244,63,94,0.8)]'
+                    : 'bg-slate-400'
+                }`}
+              />
+            </button>
+
             {isPollingActive ? (
               <button
                 onClick={handleStopPolling}
@@ -407,33 +514,200 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
 
         </div>
 
-        {/* Right 1 Col: Bot Details */}
+        {/* Right 1 Col: Latency Test & Bot Details */}
         <div className="space-y-5">
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center gap-2 border-b border-slate-800 pb-3">
+
+          {/* Real-Time Latency & Server Connection Test Card */}
+          <div
+            className={`border rounded-2xl p-5 shadow-xl transition-all space-y-4 ${
+              isWhite ? 'bg-white border-neutral-200 text-black' : 'bg-slate-900/90 border-slate-800 text-white'
+            }`}
+          >
+            <div className="flex items-center justify-between border-b pb-3 border-inherit">
+              <div className="flex items-center gap-2">
+                <Activity className="w-5 h-5 text-cyan-400" />
+                <h2 className="font-bold text-sm">تست در لحظه وضعیت اتصال سرور</h2>
+              </div>
+              
+              {/* Colored Indicator (سبز / قرمز) */}
+              <div className="flex items-center gap-2">
+                {isTestingLatency ? (
+                  <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
+                    <RefreshCw className="w-3 h-3 animate-spin" />
+                    <span>در حال تست...</span>
+                  </span>
+                ) : latencyResult ? (
+                  <div className="flex items-center gap-1.5">
+                    <span className="relative flex h-3 w-3">
+                      <span
+                        className={`animate-ping absolute inline-flex h-full w-full rounded-full opacity-75 ${
+                          latencyResult.status === 'connected' ? 'bg-emerald-400' : 'bg-rose-400'
+                        }`}
+                      />
+                      <span
+                        className={`relative inline-flex rounded-full h-3 w-3 ${
+                          latencyResult.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'
+                        }`}
+                      />
+                    </span>
+                    <span
+                      className={`text-[11px] font-bold px-2 py-0.5 rounded-full border ${
+                        latencyResult.status === 'connected'
+                          ? 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30'
+                          : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
+                      }`}
+                    >
+                      {latencyResult.status === 'connected' ? '🟢 متصل (سبز)' : '🔴 خطا (قرمز)'}
+                    </span>
+                  </div>
+                ) : (
+                  <span className="text-[11px] text-slate-400">نامشخص</span>
+                )}
+              </div>
+            </div>
+
+            <p className={`text-xs leading-relaxed ${isWhite ? 'text-neutral-600' : 'text-slate-300'}`}>
+              سنجش زنده و آنی تاخیر پاسخ‌دهی سرور (Latency) با استفاده از <strong>Fetch API</strong> و محاسبه رفت‌وبرگشت میلی‌ثانیه‌ای به اندپوینت سلامت:
+            </p>
+
+            {/* Test Button with Fetch API */}
+            <button
+              type="button"
+              onClick={testServerLatency}
+              disabled={isTestingLatency}
+              className={`w-full py-2.5 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md active:scale-98 disabled:opacity-50 ${
+                latencyResult?.status === 'error'
+                  ? 'bg-gradient-to-r from-rose-500 to-rose-600 hover:from-rose-400 hover:to-rose-500 text-white shadow-rose-600/20'
+                  : 'bg-gradient-to-r from-cyan-500 to-blue-600 hover:from-cyan-400 hover:to-blue-500 text-white shadow-cyan-600/20'
+              }`}
+            >
+              <Activity className={`w-4 h-4 ${isTestingLatency ? 'animate-spin' : ''}`} />
+              <span>
+                {isTestingLatency
+                  ? 'در حال سنجش تاخیر با Fetch API...'
+                  : 'تست در لحظه اتصال سرور (Ping Latency)'}
+              </span>
+            </button>
+
+            {/* Latency Result Display Box */}
+            {latencyResult && (
+              <div
+                className={`p-3.5 rounded-xl border transition-all ${
+                  latencyResult.status === 'connected'
+                    ? isWhite
+                      ? 'bg-emerald-50/80 border-emerald-200 text-neutral-800'
+                      : 'bg-emerald-950/20 border-emerald-500/30 text-emerald-200'
+                    : isWhite
+                    ? 'bg-rose-50/80 border-rose-200 text-neutral-800'
+                    : 'bg-rose-950/25 border-rose-500/30 text-rose-200'
+                }`}
+              >
+                {/* Latency Counter & Speed Tag */}
+                <div className="flex items-center justify-between pb-2 mb-2 border-b border-inherit">
+                  <div className="flex items-center gap-2">
+                    <Gauge className={`w-4 h-4 ${latencyResult.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'}`} />
+                    <span className="text-xs font-semibold">تاخیر سرور (Latency):</span>
+                  </div>
+                  <div className="flex items-center gap-1.5">
+                    <span
+                      className={`font-mono text-base font-extrabold ${
+                        latencyResult.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'
+                      }`}
+                    >
+                      {latencyResult.latencyMs} ms
+                    </span>
+                    {latencyResult.status === 'connected' && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
+                        {latencyResult.latencyMs < 80
+                          ? 'عالی ⚡'
+                          : latencyResult.latencyMs < 250
+                          ? 'بسیار خوب'
+                          : 'معمولی'}
+                      </span>
+                    )}
+                  </div>
+                </div>
+
+                {/* Technical Metric Specs */}
+                <div className="space-y-1.5 text-[11px]">
+                  <div className="flex justify-between">
+                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت نشانگر:</span>
+                    <span className="font-bold flex items-center gap-1">
+                      <span
+                        className={`inline-block w-2.5 h-2.5 rounded-full ${
+                          latencyResult.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'
+                        }`}
+                      />
+                      {latencyResult.status === 'connected' ? 'سبز (ارتباط سالم و پایدار)' : 'قرمز (خطای دسترسی)'}
+                    </span>
+                  </div>
+
+                  <div className="flex justify-between">
+                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>پروتکل بررسی:</span>
+                    <span className="font-mono text-cyan-400">Fetch API (/api/ping)</span>
+                  </div>
+
+                  {latencyResult.httpStatus && (
+                    <div className="flex justify-between">
+                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>کد پاسخ HTTP:</span>
+                      <span className="font-mono font-bold text-emerald-400">
+                        {latencyResult.httpStatus} OK
+                      </span>
+                    </div>
+                  )}
+
+                  {latencyResult.uptime !== undefined && (
+                    <div className="flex justify-between">
+                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>آپ‌تایم فعال سرور:</span>
+                      <span className="font-mono text-slate-300">
+                        {Math.floor(latencyResult.uptime / 60)} دقیقه و {latencyResult.uptime % 60} ثانیه
+                      </span>
+                    </div>
+                  )}
+
+                  <div className="flex justify-between">
+                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>زمان آخرین تست:</span>
+                    <span className="font-mono text-slate-300">{latencyResult.testedAt}</span>
+                  </div>
+
+                  {latencyResult.errorMessage && (
+                    <div className="pt-1.5 text-rose-300 text-[11px] font-medium border-t border-rose-500/20">
+                      ⚠️ {latencyResult.errorMessage}
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {/* Bot Details Card */}
+          <div className={`border rounded-2xl p-5 shadow-xl space-y-4 ${
+            isWhite ? 'bg-white border-neutral-200 text-black' : 'bg-slate-900/90 border-slate-800 text-white'
+          }`}>
+            <div className="flex items-center gap-2 border-b border-inherit pb-3">
               <Server className="w-5 h-5 text-purple-400" />
-              <h2 className="font-bold text-sm text-white">مشخصات ربات در تلگرام</h2>
+              <h2 className="font-bold text-sm">مشخصات ربات در تلگرام</h2>
             </div>
 
             <div className="space-y-3 text-xs">
-              <div className="flex justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-400">نام ربات:</span>
-                <span className="font-semibold text-slate-100">{statusData?.botInfo?.result?.first_name || 'ربات تلگرام'}</span>
+              <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>نام ربات:</span>
+                <span className="font-semibold">{statusData?.botInfo?.result?.first_name || 'ربات تلگرام'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-400">یوزرنیم:</span>
+              <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>یوزرنیم:</span>
                 <span className="font-mono text-cyan-400 dir-ltr">{statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : '@Bot'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-400">شناسه عددی (Bot ID):</span>
-                <span className="font-mono text-slate-200">{statusData?.botInfo?.result?.id || '—'}</span>
+              <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه عددی (Bot ID):</span>
+                <span className="font-mono">{statusData?.botInfo?.result?.id || '—'}</span>
               </div>
-              <div className="flex justify-between py-1.5 border-b border-slate-800/60">
-                <span className="text-slate-400">شناسه مالک (Admin ID):</span>
+              <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه مالک (Admin ID):</span>
                 <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || 'تعریف نشده'}</span>
               </div>
               <div className="flex justify-between py-1.5">
-                <span className="text-slate-400">وضعیت اتصال:</span>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت اتصال:</span>
                 <span className="text-emerald-400 font-semibold">
                   {isPollingActive ? '⚡ لحظه‌ای (Polling)' : isWebhookActive ? '🟢 وب‌هوک' : 'در انتظار'}
                 </span>

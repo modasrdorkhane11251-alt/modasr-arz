@@ -19,6 +19,7 @@ import {
   Palette,
   Eye,
   Sliders,
+  Zap,
 } from 'lucide-react';
 import { MiniAppView } from './MiniAppView';
 import { MiniAppLogo } from './MiniAppLogo';
@@ -26,9 +27,10 @@ import { MiniAppLogo } from './MiniAppLogo';
 interface MiniAppPreviewPanelProps {
   onOpenFullscreen: () => void;
   statusData?: any;
+  onOpenApiHub?: () => void;
 }
 
-export const MiniAppPreviewPanel: React.FC<MiniAppPreviewPanelProps> = ({ onOpenFullscreen, statusData }) => {
+export const MiniAppPreviewPanel: React.FC<MiniAppPreviewPanelProps> = ({ onOpenFullscreen, statusData, onOpenApiHub }) => {
   const [copied, setCopied] = useState(false);
   const [reloadKey, setReloadKey] = useState(0);
 
@@ -198,6 +200,17 @@ export const MiniAppPreviewPanel: React.FC<MiniAppPreviewPanelProps> = ({ onOpen
           </div>
 
           <div className="flex flex-wrap items-center gap-2.5">
+            {onOpenApiHub && (
+              <button
+                onClick={onOpenApiHub}
+                className="px-4 py-2.5 rounded-xl bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 text-xs font-bold border border-purple-500/40 flex items-center gap-2 active:scale-95 transition-all shadow-md shadow-purple-500/10"
+                title="پیکربندی Endpointها و APIهای مینی‌اپ"
+              >
+                <Zap className="w-4 h-4 text-purple-400" />
+                <span>تنظیمات API مینی‌اپ</span>
+              </button>
+            )}
+
             <button
               onClick={onOpenFullscreen}
               className="px-4 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-blue-600 hover:from-cyan-500 hover:to-blue-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-cyan-600/20 active:scale-95 transition-all"
@@ -454,10 +467,10 @@ export const MiniAppPreviewPanel: React.FC<MiniAppPreviewPanelProps> = ({ onOpen
                 ۲. برای دسترسی عمومی دیگران و بدون نیاز به ورود به گوگل، از آدرس عمومی اشتراک‌گذاری استفاده کنید:
               </p>
               <div className="p-2 rounded-xl bg-slate-900 border border-slate-800 font-mono text-[10px] text-emerald-400 flex items-center justify-between select-all">
-                <span className="truncate">{window.location.origin}/mini-modasr-arz</span>
+                <span className="truncate">https://ais-pre-zskvaylyhohvurwbbahz3f-866989204783.europe-west2.run.app/mini-modasr-arz</span>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(`${window.location.origin}/mini-modasr-arz`);
+                    navigator.clipboard.writeText('https://ais-pre-zskvaylyhohvurwbbahz3f-866989204783.europe-west2.run.app/mini-modasr-arz');
                     setCopied(true);
                     setTimeout(() => setCopied(false), 2500);
                   }}

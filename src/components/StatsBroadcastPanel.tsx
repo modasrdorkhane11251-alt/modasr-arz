@@ -34,6 +34,7 @@ import {
   AlertTriangle,
   Sliders,
   Eye,
+  Zap,
 } from 'lucide-react';
 import {
   AdConfig,
@@ -56,6 +57,7 @@ interface StatsBroadcastPanelProps {
   onRefreshStats: () => void;
   onToggleBotStatus: (enabled: boolean) => Promise<any>;
   onBroadcastMessage: (message: string) => Promise<any>;
+  onOpenApiHub?: () => void;
 }
 
 export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
@@ -63,6 +65,7 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
   onRefreshStats,
   onToggleBotStatus,
   onBroadcastMessage,
+  onOpenApiHub,
 }) => {
   const [broadcastText, setBroadcastText] = useState('');
   const [sendingBroadcast, setSendingBroadcast] = useState(false);
@@ -386,22 +389,65 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
     previewBadge: string;
     hex: string;
   }> = [
-    { key: 'telegram_blue', name: 'آبی اصلی تلگرام', bgClass: 'bg-[#2481CC]/20', borderClass: 'border-[#2481CC]/50', textClass: 'text-[#50A7EA]', gradientClass: 'from-[#2481CC] to-[#1A6AA8]', previewBadge: '🔵', hex: '#2481CC' },
-    { key: 'telegram_light_blue', name: 'آبی روشن تلگرام', bgClass: 'bg-[#2AABEE]/20', borderClass: 'border-[#2AABEE]/50', textClass: 'text-[#68C5F5]', gradientClass: 'from-[#2AABEE] to-[#229ED9]', previewBadge: '🔷', hex: '#2AABEE' },
-    { key: 'telegram_premium', name: 'بنفش تلگرام پرمیوم', bgClass: 'bg-[#7257FF]/20', borderClass: 'border-[#7257FF]/50', textClass: 'text-[#A08EFF]', gradientClass: 'from-[#7257FF] to-[#8E44AD]', previewBadge: '🟣', hex: '#7257FF' },
-    { key: 'telegram_green', name: 'سبز تایید و تیک وریفای', bgClass: 'bg-[#31B545]/20', borderClass: 'border-[#31B545]/50', textClass: 'text-[#52D265]', gradientClass: 'from-[#31B545] to-[#239934]', previewBadge: '🟢', hex: '#31B545' },
-    { key: 'telegram_red', name: 'قرمز اخطار تلگرام', bgClass: 'bg-[#E53935]/20', borderClass: 'border-[#E53935]/50', textClass: 'text-[#FF6B68]', gradientClass: 'from-[#E53935] to-[#C62828]', previewBadge: '🔴', hex: '#E53935' },
-    { key: 'telegram_orange', name: 'نارنجی ستاره و چنل تلگرام', bgClass: 'bg-[#FF9500]/20', borderClass: 'border-[#FF9500]/50', textClass: 'text-[#FFB340]', gradientClass: 'from-[#FF9500] to-[#E68500]', previewBadge: '⭐️', hex: '#FF9500' },
-    { key: 'telegram_cyan', name: 'فیروزه‌ای الماسی تلگرام', bgClass: 'bg-[#00B4D8]/20', borderClass: 'border-[#00B4D8]/50', textClass: 'text-[#48CAE4]', gradientClass: 'from-[#00B4D8] to-[#0096C7]', previewBadge: '💎', hex: '#00B4D8' },
-    { key: 'telegram_pink', name: 'صورتی بوست تلگرام', bgClass: 'bg-[#FF2D55]/20', borderClass: 'border-[#FF2D55]/50', textClass: 'text-[#FF6584]', gradientClass: 'from-[#FF2D55] to-[#D91B40]', previewBadge: '💖', hex: '#FF2D55' },
+    // ⭐️ ۳ رنگ اصلی تلگرام (قرمز، سبز، آبی) + شیشه‌ای کلاسیک
+    { key: 'telegram_blue', name: 'آبی اصلی تلگرام', bgClass: 'bg-[#2481CC]/15', borderClass: 'border-[#2481CC]/40', textClass: 'text-sky-300', gradientClass: 'from-[#2481CC] to-[#1A6AA8]', previewBadge: '🔵', hex: '#2481CC' },
+    { key: 'telegram_green', name: 'سبز رسمی تلگرام', bgClass: 'bg-[#31B545]/15', borderClass: 'border-[#31B545]/40', textClass: 'text-emerald-300', gradientClass: 'from-[#31B545] to-[#239934]', previewBadge: '🟢', hex: '#31B545' },
+    { key: 'telegram_red', name: 'قرمز اخطار تلگرام', bgClass: 'bg-[#E53935]/15', borderClass: 'border-[#E53935]/40', textClass: 'text-rose-300', gradientClass: 'from-[#E53935] to-[#C62828]', previewBadge: '🔴', hex: '#E53935' },
+    { key: 'telegram_glass', name: 'شیشه‌ای شفاف تلگرام', bgClass: 'bg-[#242F3D]/80', borderClass: 'border-white/10', textClass: 'text-slate-100', gradientClass: 'from-[#242F3D] to-[#1C2733]', previewBadge: '▫️', hex: '#242F3D' },
+    { key: 'telegram_premium', name: 'بنفش تلگرام پرمیوم', bgClass: 'bg-[#7257FF]/15', borderClass: 'border-[#7257FF]/40', textClass: 'text-[#A08EFF]', gradientClass: 'from-[#7257FF] to-[#8E44AD]', previewBadge: '🟣', hex: '#7257FF' },
+    { key: 'telegram_cyan', name: 'فیروزه‌ای الماسی تلگرام', bgClass: 'bg-[#00B4D8]/15', borderClass: 'border-[#00B4D8]/40', textClass: 'text-[#48CAE4]', gradientClass: 'from-[#00B4D8] to-[#0096C7]', previewBadge: '💎', hex: '#00B4D8' },
+    { key: 'telegram_orange', name: 'نارنجی ستاره تلگرام', bgClass: 'bg-[#FF9500]/15', borderClass: 'border-[#FF9500]/40', textClass: 'text-[#FFB340]', gradientClass: 'from-[#FF9500] to-[#E68500]', previewBadge: '⭐️', hex: '#FF9500' },
+    { key: 'telegram_light_blue', name: 'آبی روشن تلگرام', bgClass: 'bg-[#2AABEE]/15', borderClass: 'border-[#2AABEE]/40', textClass: 'text-[#68C5F5]', gradientClass: 'from-[#2AABEE] to-[#229ED9]', previewBadge: '🔷', hex: '#2AABEE' },
+    { key: 'telegram_pink', name: 'صورتی بوست تلگرام', bgClass: 'bg-[#FF2D55]/15', borderClass: 'border-[#FF2D55]/40', textClass: 'text-[#FF6584]', gradientClass: 'from-[#FF2D55] to-[#D91B40]', previewBadge: '💖', hex: '#FF2D55' },
     { key: 'telegram_dark', name: 'تم شب تیره تلگرام', bgClass: 'bg-[#0E1621]', borderClass: 'border-[#17212B]', textClass: 'text-slate-200', gradientClass: 'from-[#17212B] to-[#0E1621]', previewBadge: '🌙', hex: '#0E1621' },
-    { key: 'telegram_graphite', name: 'تم گرافیت تلگرام', bgClass: 'bg-[#242F3D]', borderClass: 'border-[#2B5278]/40', textClass: 'text-slate-200', gradientClass: 'from-[#2B5278] to-[#242F3D]', previewBadge: '▫️', hex: '#242F3D' },
   ];
 
+  // دسته‌بندی جامع ایموجی‌های پرمیوم تلگرام (Telegram Premium Emojis)
+  const PREMIUM_EMOJI_CATEGORIES = [
+    {
+      id: 'stars_gems',
+      name: '⭐️ ستاره و الماس پرمیوم',
+      badge: '⭐️',
+      emojis: ['⭐️', '🌟', '✨', '💫', '💎', '👑', '🏆', '🎖', '⚜️', '🔱', '💠', '🔮', '🪐', '🎇'],
+    },
+    {
+      id: 'fire_energy',
+      name: '⚡️ آتش و انرژی',
+      badge: '⚡️',
+      emojis: ['⚡️', '🔥', '💥', '☄️', '🚀', '🛸', '🌪️', '⚡', '💣', '🎯', '🏎️', '🧨'],
+    },
+    {
+      id: 'crypto_wealth',
+      name: '💰 طلا، ارز و کریپتو',
+      badge: '💰',
+      emojis: ['💰', '🪙', '💵', '💸', '💎', '🏦', '💳', '📊', '📈', '📉', '🥇', '🥈', '🥉', '📦'],
+    },
+    {
+      id: 'verified_badges',
+      name: '🟢 تیک وریفای و بج',
+      badge: '🟢',
+      emojis: ['🟢', '🔵', '🔴', '🟣', '🟡', '✅', '🛡️', '🔹', '🔷', '▪️', '▫️', '✔️', '🔘'],
+    },
+    {
+      id: 'tech_bot',
+      name: '🤖 تکنولوژی و ربات',
+      badge: '🤖',
+      emojis: ['🤖', '💻', '📱', '👾', '🛰️', '⚙️', '🕹️', '📡', '🌐', '🖥️', '🔌', '🧭'],
+    },
+    {
+      id: 'community_channel',
+      name: '📢 کانال و عضویت',
+      badge: '📢',
+      emojis: ['📢', '📣', '👥', '➕', '🔗', '💬', '✈️', '🎁', '🛍️', '🔖', '🔔', '📌'],
+    },
+  ];
+
+  const [activeEmojiCategory, setActiveEmojiCategory] = useState<string>('stars_gems');
+
   const POPULAR_BUTTON_EMOJIS = [
-    '👾', '💻', '💎', '🚀', '👑', '⚡', '🪙', '📊',
-    '🔥', '🏆', '🎁', '🛍️', '⭐️', '🤖', '👥', '➕',
-    '🟢', '🔵', '🟣', '🟡', '🔴', '💠', '📢', '🔗'
+    '⭐️', '💎', '👑', '⚡️', '🔥', '💰', '🪙', '🟢',
+    '🔵', '🔴', '👾', '💻', '📱', '🚀', '🏆', '🎁',
+    '📢', '➕', '🔗', '📊', '🛡️', '✅', '▫️', '✨'
   ];
 
   const handleStartAddBtn = () => {
@@ -409,8 +455,8 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
     setBtnText('');
     setBtnUrl('');
     setBtnType('url');
-    setBtnColor('blue');
-    setBtnHexColor('#2563EB');
+    setBtnColor('telegram_blue');
+    setBtnHexColor('#2481CC');
     setBtnEmoji('💻');
     setBtnPremiumId('');
     setBtnRow((adConfig.customButtons?.length || 0) + 1);
@@ -426,7 +472,7 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
     setBtnUrl(btn.url);
     setBtnType(btn.type);
     setBtnColor(btn.colorTheme);
-    const presetHex = HEX_COLOR_PRESETS.find((p) => p.theme === btn.colorTheme)?.hex || '#2563EB';
+    const presetHex = HEX_COLOR_PRESETS.find((p) => p.theme === btn.colorTheme)?.hex || '#2481CC';
     setBtnHexColor(btn.hexColor || presetHex);
     setBtnEmoji(btn.iconEmoji || '🔗');
     setBtnPremiumId(btn.premiumEmojiId || '');
@@ -1138,512 +1184,6 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
         })()}
       </div>
 
-      {/* SECTION 1.8: GLOBAL INLINE KEYBOARDS HEX COLOR STUDIO (تنظیم کدهای رنگی سفارشی کیبورد) */}
-      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
-        
-        {/* Header & Master Switch */}
-        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-4">
-          <div className="flex items-center gap-3">
-            <div className="w-10 h-10 rounded-xl bg-gradient-to-tr from-purple-600 via-pink-600 to-cyan-500 flex items-center justify-center text-white shadow-lg shadow-purple-500/20">
-              <Palette className="w-5 h-5" />
-            </div>
-            <div>
-              <div className="flex items-center gap-2">
-                <h3 className="font-bold text-sm text-white">
-                  استودیو تنظیم کدهای HEX رنگ‌های سفارشی کیبورد تلگرام (Inline Keyboards)
-                </h3>
-                <span className={`text-[10px] px-2 py-0.5 rounded-full font-bold border ${
-                  keyboardTheme.isEnabled
-                    ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
-                    : 'bg-slate-800 text-slate-400 border-slate-700'
-                }`}>
-                  {keyboardTheme.isEnabled ? '🟢 استایل‌های رنگی فعال' : '⚪️ غیرفعال'}
-                </span>
-              </div>
-              <p className="text-[11px] text-slate-400 mt-0.5">
-                تنظیم دقیق کدهای رنگی HEX برای دکمه‌های شیشه‌ای ربات تا در گروه‌ها، پیوی و کانال با رنگ‌های دلخواه شما نمایش داده شوند.
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto justify-between sm:justify-end">
-            <label className="relative inline-flex items-center cursor-pointer">
-              <input
-                type="checkbox"
-                checked={keyboardTheme.isEnabled}
-                onChange={(e) => {
-                  const updated = { ...keyboardTheme, isEnabled: e.target.checked };
-                  setKeyboardTheme(updated);
-                  handleSaveKeyboardTheme(updated);
-                }}
-                className="sr-only peer"
-              />
-              <div className="w-11 h-6 bg-slate-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full rtl:peer-checked:after:-translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:start-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-purple-600"></div>
-            </label>
-
-            <button
-              onClick={() => handleSaveKeyboardTheme()}
-              disabled={savingTheme}
-              className="px-4 py-2 rounded-xl bg-gradient-to-r from-purple-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white text-xs font-bold flex items-center gap-1.5 shadow-lg shadow-purple-600/20 active:scale-95 transition-all"
-            >
-              <Save className={`w-3.5 h-3.5 ${savingTheme ? 'animate-spin' : ''}`} />
-              <span>{savingTheme ? 'در حال ذخیره...' : 'ذخیره کدهای رنگی'}</span>
-            </button>
-          </div>
-        </div>
-
-        {/* 1-Click Fast Palette Presets */}
-        <div className="space-y-2.5">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-300 flex items-center gap-1.5">
-              <Sparkles className="w-3.5 h-3.5 text-amber-400" />
-              <span>پالت‌های رنگی آماده و حرفه‌ای (1-Click Color Schemes):</span>
-            </span>
-            <span className="text-[11px] text-slate-400">روی هر پالت کلیک کنید تا اعمال و ذخیره شود</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2.5">
-            {KEYBOARD_THEME_PRESETS.map((preset) => {
-              const isSelected = keyboardTheme.activePreset === preset.id;
-              return (
-                <button
-                  key={preset.id}
-                  type="button"
-                  onClick={() => handleApplyPreset(preset.config, preset.id)}
-                  className={`p-3 rounded-2xl border text-right transition-all flex flex-col justify-between gap-2 ${
-                    isSelected
-                      ? 'bg-purple-950/40 border-purple-500/80 shadow-lg shadow-purple-500/10 scale-[1.01]'
-                      : 'bg-slate-950/70 border-slate-800 hover:border-slate-700 hover:bg-slate-950'
-                  }`}
-                >
-                  <div className="flex items-center justify-between w-full">
-                    <span className="text-xs font-bold text-white truncate">{preset.name}</span>
-                    {isSelected && (
-                      <span className="text-[10px] px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40 font-bold shrink-0">
-                        فعال
-                      </span>
-                    )}
-                  </div>
-                  
-                  <p className="text-[10px] text-slate-400 leading-tight">
-                    {preset.description}
-                  </p>
-
-                  {/* Color Swatches */}
-                  <div className="flex items-center gap-1.5 pt-1 border-t border-slate-800/80">
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.primaryHex }} title="رنگ اصلی" />
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.groupBtnHex }} title="افزودن به گروه" />
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.miniAppBtnHex }} title="مینی‌اپ" />
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.channelBtnHex }} title="کانال" />
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.alertBtnHex }} title="هشدار و گزارش" />
-                    <span className="w-3.5 h-3.5 rounded-full border border-black/40 shadow-sm" style={{ backgroundColor: preset.config.vipBtnHex }} title="ویژه / ستاره" />
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </div>
-
-        {/* Granular Custom HEX Color Inputs */}
-        <div className="space-y-3 pt-2 border-t border-slate-800">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-200 flex items-center gap-1.5">
-              <Sliders className="w-3.5 h-3.5 text-cyan-400" />
-              <span>تنظیم دقیق کدهای HEX اختصاصی برای هر نوع دکمه:</span>
-            </span>
-            <span className="text-[11px] text-slate-400 font-mono">انتخابگر رنگ یا ورود مستقیم کد HEX</span>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            
-            {/* 1. Primary / URL Buttons */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.primaryHex }} />
-                  <span>دکمه‌های اصلی و تبلیغات (Primary)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  URL / Action
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.primaryHex || '#2481CC'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, primaryHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.primaryHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, primaryHex: e.target.value })}
-                  placeholder="#2481CC"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-cyan-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.primaryHex}25`,
-                  borderColor: `${keyboardTheme.primaryHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                🔵 خرید سرور ساعتی ↗️
-              </div>
-            </div>
-
-            {/* 2. Add to Group Button */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.groupBtnHex }} />
-                  <span>دکمه «افزودن به گروه +» (Group)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  Group Bot
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.groupBtnHex || '#31B545'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, groupBtnHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.groupBtnHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, groupBtnHex: e.target.value })}
-                  placeholder="#31B545"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-emerald-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.groupBtnHex}25`,
-                  borderColor: `${keyboardTheme.groupBtnHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                🟢 افزودن به گروه +
-              </div>
-            </div>
-
-            {/* 3. Mini App Button */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.miniAppBtnHex }} />
-                  <span>دکمه «مینی‌اپ تلگرام» (Mini App)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  Web App
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.miniAppBtnHex || '#00B4D8'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, miniAppBtnHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.miniAppBtnHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, miniAppBtnHex: e.target.value })}
-                  placeholder="#00B4D8"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-cyan-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.miniAppBtnHex}25`,
-                  borderColor: `${keyboardTheme.miniAppBtnHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                💎 mini MODASR arz (تابلوی زنده)
-              </div>
-            </div>
-
-            {/* 4. Channel Button */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.channelBtnHex }} />
-                  <span>دکمه «عضویت در کانال» (Channel)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  Channel
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.channelBtnHex || '#7257FF'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, channelBtnHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.channelBtnHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, channelBtnHex: e.target.value })}
-                  placeholder="#7257FF"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-purple-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.channelBtnHex}25`,
-                  borderColor: `${keyboardTheme.channelBtnHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                🟣 عضویت در کانال رسمی
-              </div>
-            </div>
-
-            {/* 5. VIP / Stars Buttons */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.vipBtnHex }} />
-                  <span>دکمه‌های ویژه و ستاره‌دار (VIP & Stars)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  Stars / Gold
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.vipBtnHex || '#FF9500'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, vipBtnHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.vipBtnHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, vipBtnHex: e.target.value })}
-                  placeholder="#FF9500"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-amber-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.vipBtnHex}25`,
-                  borderColor: `${keyboardTheme.vipBtnHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                ⭐️ اشتراک VIP و امکانات ویژه
-              </div>
-            </div>
-
-            {/* 6. Alert & Report Button */}
-            <div className="p-3.5 rounded-2xl bg-slate-950/80 border border-slate-800 space-y-2.5">
-              <div className="flex items-center justify-between">
-                <span className="text-xs font-bold text-white flex items-center gap-1.5">
-                  <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: keyboardTheme.alertBtnHex }} />
-                  <span>دکمه‌های گزارش و پشتیبانی (Alerts)</span>
-                </span>
-                <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-900 text-slate-400 font-mono">
-                  Report / Bug
-                </span>
-              </div>
-              <div className="flex items-center gap-2 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
-                <input
-                  type="color"
-                  value={keyboardTheme.alertBtnHex || '#E53935'}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, alertBtnHex: e.target.value.toUpperCase() })}
-                  className="w-7 h-7 rounded-lg cursor-pointer bg-transparent border-0"
-                />
-                <input
-                  type="text"
-                  value={keyboardTheme.alertBtnHex}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, alertBtnHex: e.target.value })}
-                  placeholder="#E53935"
-                  dir="ltr"
-                  className="w-full bg-transparent text-xs font-mono font-bold text-rose-300 focus:outline-none uppercase"
-                />
-              </div>
-              <div
-                className="py-1.5 px-3 rounded-xl border text-center text-xs font-bold truncate shadow-sm transition-all"
-                style={{
-                  backgroundColor: `${keyboardTheme.alertBtnHex}25`,
-                  borderColor: `${keyboardTheme.alertBtnHex}88`,
-                  color: '#FFFFFF',
-                }}
-              >
-                🔴 گزارش باگ و پشتیبانی آنلاین
-              </div>
-            </div>
-
-          </div>
-        </div>
-
-        {/* Display Scopes & Interactive Telegram Chat Preview */}
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 pt-2 border-t border-slate-800">
-          
-          {/* Display Scopes */}
-          <div className="space-y-3 p-4 rounded-2xl bg-slate-950/80 border border-slate-800">
-            <span className="text-xs font-bold text-white block border-b border-slate-800 pb-2">
-              حوزه‌های نمایش استایل‌های رنگی در تلگرام:
-            </span>
-
-            <div className="space-y-2.5 text-xs text-slate-300">
-              <label className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800/80 cursor-pointer hover:border-slate-700">
-                <input
-                  type="checkbox"
-                  checked={keyboardTheme.showColorBadgesInGroups}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, showColorBadgesInGroups: e.target.checked })}
-                  className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-0"
-                />
-                <div>
-                  <span className="font-bold text-white block">👥 گروه‌ها و سوپرگروه‌ها (Groups)</span>
-                  <span className="text-[10px] text-slate-400">نمایش دکمه‌های رنگی در پاسخ به اعضای گروه‌ها</span>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800/80 cursor-pointer hover:border-slate-700">
-                <input
-                  type="checkbox"
-                  checked={keyboardTheme.showColorBadgesInPrivate}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, showColorBadgesInPrivate: e.target.checked })}
-                  className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-0"
-                />
-                <div>
-                  <span className="font-bold text-white block">💬 پیام‌های خصوصی (Private DM)</span>
-                  <span className="text-[10px] text-slate-400">نمایش دکمه‌های رنگی در استعلام‌های خصوصی پیوی</span>
-                </div>
-              </label>
-
-              <label className="flex items-center gap-2.5 p-2 rounded-xl bg-slate-900/60 border border-slate-800/80 cursor-pointer hover:border-slate-700">
-                <input
-                  type="checkbox"
-                  checked={keyboardTheme.showColorBadgesInChannel}
-                  onChange={(e) => setKeyboardTheme({ ...keyboardTheme, showColorBadgesInChannel: e.target.checked })}
-                  className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-purple-600 focus:ring-0"
-                />
-                <div>
-                  <span className="font-bold text-white block">📢 پست‌های ارسالی کانال (Channel Posts)</span>
-                  <span className="text-[10px] text-slate-400">ضمیمه کردن کیبورد شیشه‌ای رنگی به بولتن‌های کانال</span>
-                </div>
-              </label>
-            </div>
-          </div>
-
-          {/* Interactive Telegram Live Mockup */}
-          <div className="lg:col-span-2 p-4 rounded-2xl bg-gradient-to-br from-slate-950 via-[#0E1621] to-[#17212B] border border-slate-800 space-y-3">
-            <div className="flex items-center justify-between border-b border-slate-800/80 pb-2">
-              <div className="flex items-center gap-2">
-                <Eye className="w-4 h-4 text-cyan-400" />
-                <span className="text-xs font-bold text-white">پیش‌نمایش زنده ظاهر کیبورد در چت تلگرام (Live Preview):</span>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded bg-slate-800 text-cyan-300 font-mono">Telegram UI</span>
-            </div>
-
-            {/* Telegram Message Bubble */}
-            <div className="bg-[#182533] p-3.5 rounded-2xl border border-[#242F3D] max-w-lg mx-auto space-y-3 shadow-2xl">
-              <div className="flex items-center justify-between text-[11px] border-b border-slate-700/50 pb-1.5">
-                <span className="font-bold text-cyan-400">🤖 Modasr_Arzbot</span>
-                <span className="text-slate-400 font-mono text-[10px]">12:45 PM</span>
-              </div>
-
-              <div className="text-xs text-slate-200 font-mono leading-relaxed space-y-1">
-                <div className="font-bold text-amber-300">📊 استعلام لحظه‌ای نرخ بازار:</div>
-                <div>💵 دلار آمریکا: <span className="text-white font-bold">۲۶۸,۳۰۰ تومان</span></div>
-                <div>🪙 تتر (USDT): <span className="text-white font-bold">۲۶۸,۴۹۱ تومان</span></div>
-                <div>🥇 طلای ۱۸ عیار: <span className="text-white font-bold">۲۶,۳۲۷,۸۰۰ تومان</span></div>
-              </div>
-
-              {/* Mockup Inline Keyboard */}
-              <div className="space-y-1.5 pt-1">
-                <div
-                  className="w-full py-2 px-3 rounded-xl border text-center text-xs font-bold flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer hover:brightness-110 active:scale-[0.98]"
-                  style={{
-                    backgroundColor: `${keyboardTheme.primaryHex}25`,
-                    borderColor: `${keyboardTheme.primaryHex}88`,
-                    color: '#FFFFFF',
-                    boxShadow: `0 0 10px ${keyboardTheme.primaryHex}20`,
-                  }}
-                >
-                  <span>🔵</span>
-                  <span>خرید سرور ساعتی ↗️</span>
-                </div>
-
-                <div className="grid grid-cols-2 gap-1.5">
-                  <div
-                    className="py-2 px-2 rounded-xl border text-center text-[11px] font-bold flex items-center justify-center gap-1 shadow-md transition-all truncate cursor-pointer hover:brightness-110 active:scale-[0.98]"
-                    style={{
-                      backgroundColor: `${keyboardTheme.groupBtnHex}25`,
-                      borderColor: `${keyboardTheme.groupBtnHex}88`,
-                      color: '#FFFFFF',
-                      boxShadow: `0 0 10px ${keyboardTheme.groupBtnHex}20`,
-                    }}
-                  >
-                    <span>🟢</span>
-                    <span className="truncate">افزودن به گروه +</span>
-                  </div>
-
-                  <div
-                    className="py-2 px-2 rounded-xl border text-center text-[11px] font-bold flex items-center justify-center gap-1 shadow-md transition-all truncate cursor-pointer hover:brightness-110 active:scale-[0.98]"
-                    style={{
-                      backgroundColor: `${keyboardTheme.miniAppBtnHex}25`,
-                      borderColor: `${keyboardTheme.miniAppBtnHex}88`,
-                      color: '#FFFFFF',
-                      boxShadow: `0 0 10px ${keyboardTheme.miniAppBtnHex}20`,
-                    }}
-                  >
-                    <span>💎</span>
-                    <span className="truncate">mini MODASR arz</span>
-                  </div>
-                </div>
-
-                <div
-                  className="w-full py-2 px-3 rounded-xl border text-center text-xs font-bold flex items-center justify-center gap-1.5 shadow-md transition-all cursor-pointer hover:brightness-110 active:scale-[0.98]"
-                  style={{
-                    backgroundColor: `${keyboardTheme.channelBtnHex}25`,
-                    borderColor: `${keyboardTheme.channelBtnHex}88`,
-                    color: '#FFFFFF',
-                    boxShadow: `0 0 10px ${keyboardTheme.channelBtnHex}20`,
-                  }}
-                >
-                  <span>🟣</span>
-                  <span>عضویت در کانال رسمی</span>
-                </div>
-              </div>
-
-            </div>
-          </div>
-
-        </div>
-
-        {/* Save Bar */}
-        <div className="flex justify-end pt-1">
-          <button
-            onClick={() => handleSaveKeyboardTheme()}
-            disabled={savingTheme}
-            className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-purple-600 via-pink-600 to-cyan-600 hover:from-purple-500 hover:to-cyan-500 text-white text-xs font-bold flex items-center gap-2 shadow-lg shadow-purple-600/20 active:scale-95 transition-all"
-          >
-            <Save className={`w-4 h-4 ${savingTheme ? 'animate-spin' : ''}`} />
-            <span>{savingTheme ? 'در حال ذخیره...' : 'ذخیره و اعمال سراسری کدهای HEX کیبورد'}</span>
-          </button>
-        </div>
-
-      </div>
-
       {/* SECTION 2: INLINE GLASS BUTTONS, ADD-TO-GROUP, SPONSOR ADS & COLOR THEMES */}
       <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-6 shadow-xl space-y-6">
         
@@ -1809,16 +1349,21 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                   />
                 </div>
 
-                {/* 4. Color Theme Selection & Custom HEX Color Picker */}
-                <div className="space-y-3 md:col-span-2 p-3.5 rounded-2xl bg-slate-900/90 border border-slate-800">
-                  <div className="flex items-center justify-between">
-                    <label className="text-xs font-semibold text-slate-300 flex items-center gap-1.5">
-                      <Palette className="w-3.5 h-3.5 text-cyan-400" />
-                      <span>انتخاب از رنگ‌های اصلی و رسمی تلگرام (Telegram Colors):</span>
-                    </label>
-                    <div className="flex items-center gap-2">
+                {/* 4. Color Theme Selection & Telegram Official Colors */}
+                <div className="space-y-3 md:col-span-2 p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                    <div>
+                      <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Palette className="w-4 h-4 text-cyan-400" />
+                        <span>رنگ‌های اصلی دکمه‌های شیشه‌ای تلگرام (قرمز، سبز، آبی و شیشه‌ای):</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        در تلگرام دکمه‌ها به صورت شیشه‌ای با نشانگر رنگی اصلی (قرمز، سبز، آبی) نمایش داده می‌شوند.
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2 self-start sm:self-auto">
                       <span className="text-[11px] text-cyan-400 font-bold">
-                        {COLOR_THEMES.find((c) => c.key === btnColor)?.name}
+                        {COLOR_THEMES.find((c) => c.key === btnColor)?.name || 'شیشه‌ای شفاف'}
                       </span>
                       <span
                         className="text-[10px] font-mono font-bold px-2 py-0.5 rounded border"
@@ -1833,9 +1378,9 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                     </div>
                   </div>
 
-                  {/* Official Telegram Preset Themes */}
-                  <div className="grid grid-cols-2 sm:grid-cols-5 gap-2">
-                    {COLOR_THEMES.map((c) => {
+                  {/* 4 Primary Telegram Core Colors (Featured & Prominent) */}
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2.5">
+                    {COLOR_THEMES.slice(0, 4).map((c) => {
                       const isSelected = btnColor === c.key;
                       return (
                         <button
@@ -1845,141 +1390,176 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                             setBtnColor(c.key);
                             setBtnHexColor(c.hex);
                           }}
-                          className={`p-2.5 rounded-xl border text-xs font-bold flex items-center justify-between transition-all ${
+                          className={`p-3 rounded-xl border text-xs font-bold flex items-center justify-between transition-all backdrop-blur-md ${
                             isSelected
-                              ? `bg-gradient-to-r ${c.gradientClass} text-white border-white/60 shadow-lg scale-[1.02]`
-                              : 'bg-slate-950 border-slate-800 text-slate-300 hover:border-slate-700'
+                              ? 'bg-slate-800 text-white border-cyan-400 ring-2 ring-cyan-400/30 shadow-lg scale-[1.02]'
+                              : 'bg-slate-950/70 border-slate-800 text-slate-300 hover:border-slate-700'
                           }`}
                         >
-                          <div className="flex items-center gap-1.5 min-w-0">
-                            <span>{c.previewBadge}</span>
-                            <span className="text-[10px] truncate">{c.name}</span>
+                          <div className="flex items-center gap-2 min-w-0">
+                            <span className="text-base">{c.previewBadge}</span>
+                            <div className="text-right">
+                              <span className="text-xs font-bold block">{c.name}</span>
+                              <span className="text-[10px] font-mono opacity-60">{c.hex}</span>
+                            </div>
                           </div>
-                          {isSelected && <Check className="w-3 h-3 shrink-0" />}
+                          {isSelected && <Check className="w-4 h-4 text-cyan-400 shrink-0" />}
                         </button>
                       );
                     })}
                   </div>
 
-                  {/* Advanced Custom HEX Color Code & Picker */}
-                  <div className="pt-2 border-t border-slate-800/80 space-y-2">
-                    <div className="flex items-center justify-between text-[11px] text-slate-400">
-                      <span>پالت کدهای رنگی رسمی تلگرام (HEX Colors):</span>
-                      <span className="text-cyan-400 font-mono text-[10px]">Telegram Official Palette</span>
+                  {/* Other Telegram Official Colors (Secondary Row) */}
+                  <div className="pt-2">
+                    <span className="text-[11px] text-slate-400 block mb-2 font-medium">سایر رنگ‌های رسمی و پرمیوم تلگرام:</span>
+                    <div className="grid grid-cols-2 sm:grid-cols-6 gap-2">
+                      {COLOR_THEMES.slice(4).map((c) => {
+                        const isSelected = btnColor === c.key;
+                        return (
+                          <button
+                            key={c.key}
+                            type="button"
+                            onClick={() => {
+                              setBtnColor(c.key);
+                              setBtnHexColor(c.hex);
+                            }}
+                            className={`p-2 rounded-xl border text-[11px] font-bold flex items-center justify-between transition-all ${
+                              isSelected
+                                ? 'bg-slate-800 text-white border-cyan-400 ring-1 ring-cyan-400/40'
+                                : 'bg-slate-950 border-slate-800/80 text-slate-400 hover:text-slate-200 hover:border-slate-700'
+                            }`}
+                          >
+                            <span className="text-sm">{c.previewBadge}</span>
+                            <span className="truncate mx-1">{c.name.split(' ')[0]}</span>
+                            {isSelected && <Check className="w-3 h-3 text-cyan-400 shrink-0" />}
+                          </button>
+                        );
+                      })}
                     </div>
+                  </div>
 
-                    {/* Fast HEX Presets */}
-                    <div className="flex flex-wrap gap-1.5">
-                      {HEX_COLOR_PRESETS.map((preset) => (
-                        <button
-                          key={preset.hex}
-                          type="button"
-                          onClick={() => {
-                            setBtnHexColor(preset.hex);
-                            setBtnColor(preset.theme);
-                          }}
-                          className={`px-2.5 py-1 rounded-lg text-[11px] font-mono font-bold flex items-center gap-1.5 border transition-all ${
-                            btnHexColor.toLowerCase() === preset.hex.toLowerCase()
-                              ? 'border-white text-white scale-105 shadow'
-                              : 'border-slate-800 text-slate-300 hover:border-slate-700 bg-slate-950'
-                          }`}
-                          style={{
-                            backgroundColor:
-                              btnHexColor.toLowerCase() === preset.hex.toLowerCase()
-                                ? `${preset.hex}44`
-                                : undefined,
-                          }}
-                        >
-                          <span
-                            className="w-2.5 h-2.5 rounded-full"
-                            style={{ backgroundColor: preset.hex }}
-                          />
-                          <span>{preset.hex}</span>
-                        </button>
-                      ))}
-                    </div>
-
-                    {/* Custom Color Input & Live Preview */}
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 pt-1">
-                      <div className="flex items-center gap-2 bg-slate-950 p-2 rounded-xl border border-slate-800">
-                        <input
-                          type="color"
-                          value={btnHexColor.startsWith('#') && btnHexColor.length === 7 ? btnHexColor : '#2563EB'}
-                          onChange={(e) => setBtnHexColor(e.target.value.toUpperCase())}
-                          className="w-8 h-8 rounded-lg cursor-pointer bg-transparent border-0"
-                          title="انتخاب رنگ از پالت رنگی ویندوز/مرورگر"
-                        />
-                        <div className="flex-1">
-                          <input
-                            type="text"
-                            value={btnHexColor}
-                            onChange={(e) => setBtnHexColor(e.target.value)}
-                            placeholder="#2563EB"
-                            dir="ltr"
-                            className="w-full bg-transparent text-xs font-mono text-cyan-300 focus:outline-none uppercase font-bold"
-                          />
-                        </div>
-                      </div>
-
-                      {/* Live Button Preview Box */}
-                      <div className="flex items-center justify-center p-2 rounded-xl bg-slate-950/80 border border-slate-800">
-                        <div
-                          className="px-4 py-1.5 rounded-xl border flex items-center gap-2 text-xs font-bold shadow-md transition-all truncate max-w-full"
-                          style={{
-                            backgroundColor: `${btnHexColor}25`,
-                            borderColor: `${btnHexColor}88`,
-                            color: '#FFFFFF',
-                            boxShadow: `0 0 12px ${btnHexColor}33`,
-                          }}
-                        >
-                          <span>{btnEmoji || '🔹'}</span>
-                          <span className="truncate">{btnText || 'پیش‌نمایش دکمه'}</span>
-                        </div>
+                  {/* Live Glass Button Preview in Form */}
+                  <div className="pt-3 border-t border-slate-800/80 flex flex-col sm:flex-row items-center justify-between gap-3">
+                    <span className="text-[11px] text-slate-400 font-medium">
+                      پیش‌نمایش زنده ظاهر شیشه‌ای دکمه در تلگرام:
+                    </span>
+                    <div className="w-full sm:w-auto sm:min-w-[240px]">
+                      <div
+                        className={`py-2 px-4 rounded-xl border flex items-center justify-center gap-2 text-xs font-semibold backdrop-blur-md transition-all ${
+                          btnColor === 'telegram_red'
+                            ? 'bg-[#E53935]/15 text-rose-200 border-[#E53935]/40 shadow-[0_0_12px_rgba(229,57,53,0.15)]'
+                            : btnColor === 'telegram_green'
+                            ? 'bg-[#31B545]/15 text-emerald-200 border-[#31B545]/40 shadow-[0_0_12px_rgba(49,181,69,0.15)]'
+                            : btnColor === 'telegram_blue'
+                            ? 'bg-[#2481CC]/15 text-sky-200 border-[#2481CC]/40 shadow-[0_0_12px_rgba(36,129,204,0.15)]'
+                            : btnColor === 'telegram_premium'
+                            ? 'bg-[#7257FF]/15 text-purple-200 border-[#7257FF]/40 shadow-[0_0_12px_rgba(114,87,255,0.15)]'
+                            : 'bg-[#242F3D]/80 text-slate-100 border-white/10 shadow-sm'
+                        }`}
+                      >
+                        {btnColor === 'telegram_red' && <span className="text-xs">🔴</span>}
+                        {btnColor === 'telegram_green' && <span className="text-xs">🟢</span>}
+                        {btnColor === 'telegram_blue' && <span className="text-xs">🔵</span>}
+                        {btnEmoji && <span className="text-sm">{btnEmoji}</span>}
+                        <span className="truncate">{btnText || 'متن دکمه شیشه‌ای'}</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* 5. Emoji & Telegram Premium Emoji Picker */}
-                <div className="space-y-2 md:col-span-2">
-                  <label className="text-xs font-semibold text-slate-300 flex items-center justify-between">
-                    <div className="flex items-center gap-1.5">
-                      <Smile className="w-3.5 h-3.5 text-yellow-400" />
-                      <span>آیکون ایموجی یا کد ایموجی پرمیوم تلگرام (Premium Emoji):</span>
+                {/* 5. Telegram Premium Emoji Picker & Input */}
+                <div className="space-y-3 md:col-span-2 p-4 rounded-2xl bg-slate-900/90 border border-slate-800">
+                  <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-800/80 pb-2.5">
+                    <div>
+                      <label className="text-xs font-bold text-white flex items-center gap-1.5">
+                        <Sparkles className="w-4 h-4 text-amber-400" />
+                        <span>ایموجی‌های پرمیوم تلگرام (Telegram Premium Emojis):</span>
+                      </label>
+                      <p className="text-[11px] text-slate-400 mt-0.5">
+                        روی هر ایموجی کلیک کنید تا به عنوان آیکون دکمه یا مستقیماً در متن دکمه قرار گیرد.
+                      </p>
                     </div>
-                    <span className="text-[11px] text-yellow-400 font-mono">
-                      ایموجی فعال: {btnEmoji}
-                    </span>
-                  </label>
 
-                  {/* 24 Popular / Luxury / Crypto Emojis */}
-                  <div className="flex flex-wrap gap-1.5 p-2 rounded-xl bg-slate-900/80 border border-slate-800">
-                    {POPULAR_BUTTON_EMOJIS.map((emoji) => (
+                    <div className="flex items-center gap-2">
+                      <span className="text-[11px] text-amber-300 font-bold bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 rounded-lg flex items-center gap-1.5">
+                        <span>ایموجی فعال:</span>
+                        <span className="text-sm">{btnEmoji}</span>
+                      </span>
                       <button
-                        key={emoji}
                         type="button"
-                        onClick={() => setBtnEmoji(emoji)}
-                        className={`w-8 h-8 rounded-lg text-sm flex items-center justify-center transition-all ${
-                          btnEmoji === emoji
-                            ? 'bg-cyan-500/30 border border-cyan-400 text-white scale-110 shadow'
-                            : 'hover:bg-slate-800 text-slate-300'
-                        }`}
+                        onClick={() => {
+                          if (btnEmoji) {
+                            setBtnText((prev) => `${prev} ${btnEmoji}`.trim());
+                          }
+                        }}
+                        className="text-[11px] font-bold px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-750 text-cyan-300 border border-slate-700 transition-all"
+                        title="درج ایموجی انتخاب شده در انتهای متن دکمه"
                       >
-                        {emoji}
+                        ➕ درج در متن
                       </button>
-                    ))}
+                    </div>
                   </div>
 
-                  {/* Custom Telegram Premium Emoji Input */}
-                  <div className="pt-1 flex items-center gap-2">
-                    <div className="flex-1">
+                  {/* Category Filter Tabs */}
+                  <div className="flex flex-wrap gap-1.5">
+                    {PREMIUM_EMOJI_CATEGORIES.map((cat) => {
+                      const isActive = activeEmojiCategory === cat.id;
+                      return (
+                        <button
+                          key={cat.id}
+                          type="button"
+                          onClick={() => setActiveEmojiCategory(cat.id)}
+                          className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all flex items-center gap-1.5 border ${
+                            isActive
+                              ? 'bg-amber-500/20 text-amber-300 border-amber-500/50 shadow'
+                              : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-slate-200'
+                          }`}
+                        >
+                          <span>{cat.badge}</span>
+                          <span>{cat.name}</span>
+                        </button>
+                      );
+                    })}
+                  </div>
+
+                  {/* Emoji Grid for Active Category */}
+                  <div className="p-3 rounded-xl bg-slate-950 border border-slate-800/90">
+                    <div className="flex flex-wrap gap-2">
+                      {(
+                        PREMIUM_EMOJI_CATEGORIES.find((c) => c.id === activeEmojiCategory)?.emojis ||
+                        POPULAR_BUTTON_EMOJIS
+                      ).map((emoji) => (
+                        <button
+                          key={emoji}
+                          type="button"
+                          onClick={() => setBtnEmoji(emoji)}
+                          onDoubleClick={() => setBtnText((prev) => `${prev} ${emoji}`.trim())}
+                          title={`انتخاب ${emoji} (دابل کلیک برای افزودن به متن)`}
+                          className={`w-9 h-9 rounded-xl text-lg flex items-center justify-center transition-all ${
+                            btnEmoji === emoji
+                              ? 'bg-amber-500/30 border-2 border-amber-400 text-white scale-110 shadow-lg shadow-amber-500/20'
+                              : 'hover:bg-slate-800 hover:scale-105 text-slate-200 bg-slate-900/60 border border-slate-800/80'
+                          }`}
+                        >
+                          {emoji}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Custom Telegram Premium Emoji ID / Tag Input */}
+                  <div className="pt-2 border-t border-slate-800/80 space-y-1.5">
+                    <label className="text-[11px] text-slate-400 flex items-center justify-between">
+                      <span>شناسه اختصاصی یا تگ ایموجی پرمیوم تلگرام (Custom Emoji ID):</span>
+                      <span className="text-[10px] text-cyan-400 font-mono">Premium Emoji ID</span>
+                    </label>
+                    <div className="flex items-center gap-2">
                       <input
                         type="text"
                         value={btnPremiumId}
                         onChange={(e) => {
                           const val = e.target.value;
                           setBtnPremiumId(val);
-                          // Auto extract emoji ID or tag
                           const match = val.match(/id=([0-9]+)/);
                           if (match) {
                             setBtnEmoji(`![💎](tg://emoji?id=${match[1]})`);
@@ -1987,10 +1567,21 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                             setBtnEmoji(`![💎](tg://emoji?id=${val.trim()})`);
                           }
                         }}
-                        placeholder="آیدی ایموجی پرمیوم تلگرام (مانند: 5321231658156830001 یا تگ ![💻](tg://emoji?id=...))"
+                        placeholder="آیدی عددی ایموجی پرمیوم (مانند: 5321231658156830001) یا تگ ![⭐️](tg://emoji?id=...)"
                         dir="ltr"
-                        className="w-full px-3 py-1.5 rounded-lg bg-slate-900 border border-slate-800 text-xs font-mono text-cyan-300 focus:outline-none"
+                        className="flex-1 px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-800 text-xs font-mono text-cyan-300 focus:outline-none focus:border-cyan-500"
                       />
+                      {btnPremiumId && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setBtnText((prev) => `${prev} ${btnEmoji}`.trim());
+                          }}
+                          className="px-3 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 border border-cyan-500/30 text-xs font-bold transition-all"
+                        >
+                          درج در دکمه
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>
@@ -2091,25 +1682,28 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                 >
                   {/* Left: Button Info & Color Badge */}
                   <div className="flex items-center gap-3">
-                    {/* Visual Color Pill with Custom HEX support */}
+                    {/* Visual Telegram Glass Pill with Authentic Color Indicator */}
                     <div
-                      className={`px-3 py-1.5 rounded-xl border flex items-center gap-1.5 text-xs font-bold transition-all ${
-                        !btn.hexColor
-                          ? `${theme.bgClass} ${theme.borderClass} ${theme.textClass}`
-                          : ''
+                      className={`px-3 py-1.5 rounded-xl border flex items-center gap-1.5 text-xs font-semibold transition-all backdrop-blur-md ${
+                        btn.colorTheme === 'telegram_red' || btn.colorTheme === 'rose' || btn.hexColor?.toLowerCase().includes('e53935')
+                          ? 'bg-[#E53935]/15 text-rose-200 border-[#E53935]/40'
+                          : btn.colorTheme === 'telegram_green' || btn.colorTheme === 'emerald' || btn.hexColor?.toLowerCase().includes('31b545')
+                          ? 'bg-[#31B545]/15 text-emerald-200 border-[#31B545]/40'
+                          : btn.colorTheme === 'telegram_blue' || btn.colorTheme === 'blue' || btn.hexColor?.toLowerCase().includes('2481cc')
+                          ? 'bg-[#2481CC]/15 text-sky-200 border-[#2481CC]/40'
+                          : btn.colorTheme === 'telegram_premium' || btn.hexColor?.toLowerCase().includes('7257ff')
+                          ? 'bg-[#7257FF]/15 text-purple-200 border-[#7257FF]/40'
+                          : 'bg-[#242F3D]/80 text-slate-100 border-white/10'
                       }`}
-                      style={
-                        btn.hexColor
-                          ? {
-                              backgroundColor: `${btn.hexColor}25`,
-                              borderColor: `${btn.hexColor}88`,
-                              color: '#FFFFFF',
-                              boxShadow: `0 0 10px ${btn.hexColor}22`,
-                            }
-                          : undefined
-                      }
                     >
-                      <span>{btn.iconEmoji || theme.previewBadge}</span>
+                      <span className="text-[11px]">
+                        {btn.colorTheme === 'telegram_red' || btn.hexColor?.toLowerCase().includes('e53935') ? '🔴'
+                          : btn.colorTheme === 'telegram_green' || btn.hexColor?.toLowerCase().includes('31b545') ? '🟢'
+                          : btn.colorTheme === 'telegram_blue' || btn.hexColor?.toLowerCase().includes('2481cc') ? '🔵'
+                          : btn.colorTheme === 'telegram_premium' ? '🟣'
+                          : ''}
+                      </span>
+                      <span>{btn.iconEmoji || '▫️'}</span>
                       <span className="max-w-[160px] truncate">{btn.text}</span>
                     </div>
 
@@ -2147,22 +1741,20 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
                   {/* Right: Color Selector + Action Controls */}
                   <div className="flex items-center gap-2 w-full sm:w-auto justify-end">
                     
-                    {/* Quick Color Picker Dots */}
-                    <div className="flex items-center gap-1 bg-slate-900 p-1 rounded-lg border border-slate-800">
-                      {COLOR_THEMES.slice(0, 5).map((c) => (
+                    {/* Quick Color Picker Dots: 🔵 آبی, 🟢 سبز, 🔴 قرمز, ▫️ شیشه‌ای */}
+                    <div className="flex items-center gap-1.5 bg-slate-900 p-1.5 rounded-xl border border-slate-800">
+                      {COLOR_THEMES.slice(0, 4).map((c) => (
                         <button
                           key={c.key}
                           type="button"
                           title={c.name}
                           onClick={() => handleQuickColorChange(btn.id, c.key)}
-                          className={`w-4 h-4 rounded-full transition-all ${
-                            btn.colorTheme === c.key ? 'ring-2 ring-white scale-110' : 'opacity-70 hover:opacity-100'
-                          } ${
-                            c.key === 'emerald' ? 'bg-emerald-500' :
-                            c.key === 'blue' ? 'bg-blue-500' :
-                            c.key === 'purple' ? 'bg-purple-500' :
-                            c.key === 'amber' ? 'bg-amber-500' : 'bg-cyan-500'
+                          className={`w-4 h-4 rounded-full transition-all border ${
+                            btn.colorTheme === c.key
+                              ? 'ring-2 ring-white scale-110 shadow-md border-white'
+                              : 'opacity-65 hover:opacity-100 border-white/20'
                           }`}
+                          style={{ backgroundColor: c.hex }}
                         />
                       ))}
                     </div>
@@ -2258,14 +1850,14 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
           </div>
         </div>
 
-        {/* Live Visual Preview: Exactly matches Telegram Post & Buttons */}
+        {/* Live Visual Preview: Authentic Telegram Post & Glass Buttons (طرح واقعی دکمه‌های شیشه‌ای تلگرام) */}
         <div className="bg-slate-950/70 border border-slate-800/80 rounded-2xl p-4 space-y-2">
           <div className="flex items-center justify-between mb-1">
-            <span className="text-[11px] text-slate-400 font-bold flex items-center gap-1.5">
+            <span className="text-[11px] text-slate-300 font-bold flex items-center gap-1.5">
               <span>📱</span>
-              <span>پیش‌نمایش زنده پیام و دکمه‌های رنگی در تلگرام (طرح اسکرین‌شات):</span>
+              <span>پیش‌نمایش دکمه‌های شیشه‌ای تلگرام (با رنگ‌های اصلی قرمز، سبز، آبی و ایموجی پرمیوم):</span>
             </span>
-            <span className="text-[10px] text-cyan-400 font-mono">طرح واقعی داخل تلگرام</span>
+            <span className="text-[10px] text-cyan-400 font-mono">طرح واقعی شیشه‌ای تلگرام</span>
           </div>
           
           <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 text-xs text-slate-200 font-mono leading-relaxed space-y-2.5 max-w-md mx-auto shadow-2xl">
@@ -2289,38 +1881,40 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
               <span className="text-cyan-400">@MODASR_ARZ</span>
             </div>
 
-            {/* Simulated Telegram Colored Inline Buttons */}
-            <div className="pt-2 space-y-1.5 font-sans">
+            {/* Authentic Telegram Glass Inline Buttons (بدون گرادیان‌های رنگی تند) */}
+            <div className="pt-2 space-y-2 font-sans">
               {(adConfig.customButtons || DEFAULT_CUSTOM_BUTTONS)
                 .filter(b => b.isEnabled)
                 .map((btn) => {
-                  const theme = COLOR_THEMES.find(c => c.key === btn.colorTheme) || COLOR_THEMES[0];
-                  
+                  const isRed = btn.colorTheme === 'telegram_red' || btn.colorTheme === 'rose' || btn.hexColor?.toLowerCase().includes('e53935') || btn.hexColor?.toLowerCase().includes('ef4444');
+                  const isGreen = btn.colorTheme === 'telegram_green' || btn.colorTheme === 'emerald' || btn.hexColor?.toLowerCase().includes('31b545') || btn.hexColor?.toLowerCase().includes('10b981');
+                  const isBlue = btn.colorTheme === 'telegram_blue' || btn.colorTheme === 'telegram_light_blue' || btn.colorTheme === 'blue' || btn.hexColor?.toLowerCase().includes('2481cc') || btn.hexColor?.toLowerCase().includes('2563eb');
+                  const isPremium = btn.colorTheme === 'telegram_premium' || btn.colorTheme === 'purple' || btn.hexColor?.toLowerCase().includes('7257ff');
+
+                  const colorBadge = isRed ? '🔴' : isGreen ? '🟢' : isBlue ? '🔵' : isPremium ? '🟣' : '';
+
                   return (
                     <a
                       key={btn.id}
                       href={btn.url || '#'}
                       target="_blank"
                       rel="noreferrer"
-                      className={`w-full py-2 px-3 rounded-xl text-xs font-bold flex items-center justify-center gap-2 shadow-md transition-all border ${
-                        btn.colorTheme === 'blue'
-                          ? 'bg-gradient-to-r from-blue-700 via-blue-600 to-indigo-700 text-white border-blue-400/40 hover:brightness-110'
-                          : btn.colorTheme === 'emerald'
-                          ? 'bg-gradient-to-r from-emerald-700 via-emerald-600 to-teal-700 text-white border-emerald-400/40 hover:brightness-110'
-                          : btn.colorTheme === 'purple'
-                          ? 'bg-gradient-to-r from-purple-700 via-purple-600 to-fuchsia-700 text-white border-purple-400/40 hover:brightness-110'
-                          : btn.colorTheme === 'amber'
-                          ? 'bg-gradient-to-r from-amber-600 via-yellow-600 to-amber-700 text-white border-amber-300/40 hover:brightness-110'
-                          : btn.colorTheme === 'rose'
-                          ? 'bg-gradient-to-r from-rose-700 to-red-700 text-white border-rose-400/40 hover:brightness-110'
-                          : btn.colorTheme === 'cyan'
-                          ? 'bg-gradient-to-r from-cyan-600 to-blue-600 text-white border-cyan-400/40 hover:brightness-110'
-                          : 'bg-slate-800 text-slate-100 border-slate-700 hover:bg-slate-750'
+                      className={`w-full py-2.5 px-4 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 transition-all backdrop-blur-md border ${
+                        isRed
+                          ? 'bg-[#E53935]/15 hover:bg-[#E53935]/25 text-red-200 border-[#E53935]/40 shadow-[0_0_12px_rgba(229,57,53,0.15)]'
+                          : isGreen
+                          ? 'bg-[#31B545]/15 hover:bg-[#31B545]/25 text-emerald-200 border-[#31B545]/40 shadow-[0_0_12px_rgba(49,181,69,0.15)]'
+                          : isBlue
+                          ? 'bg-[#2481CC]/15 hover:bg-[#2481CC]/25 text-sky-200 border-[#2481CC]/40 shadow-[0_0_12px_rgba(36,129,204,0.15)]'
+                          : isPremium
+                          ? 'bg-[#7257FF]/15 hover:bg-[#7257FF]/25 text-purple-200 border-[#7257FF]/40 shadow-[0_0_12px_rgba(114,87,255,0.15)]'
+                          : 'bg-[#242F3D]/80 hover:bg-[#2B5278]/90 text-slate-100 border-white/10 shadow-sm'
                       }`}
                     >
-                      <span className="text-sm">{btn.iconEmoji || theme.previewBadge}</span>
-                      <span>{btn.text}</span>
-                      <ExternalLink className="w-3 h-3 opacity-70 ml-1" />
+                      {colorBadge && <span className="text-xs shrink-0">{colorBadge}</span>}
+                      {btn.iconEmoji && <span className="text-sm shrink-0">{btn.iconEmoji}</span>}
+                      <span className="truncate">{btn.text}</span>
+                      <ExternalLink className="w-3 h-3 opacity-60 ml-1 shrink-0" />
                     </a>
                   );
                 })}
@@ -2365,6 +1959,17 @@ export const StatsBroadcastPanel: React.FC<StatsBroadcastPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-auto">
+            {onOpenApiHub && (
+              <button
+                onClick={onOpenApiHub}
+                className="px-3.5 py-2 rounded-xl bg-cyan-600/20 hover:bg-cyan-600/30 text-cyan-300 text-xs font-bold flex items-center gap-1.5 border border-cyan-500/30 active:scale-95 transition-all shadow-md shadow-cyan-500/10"
+                title="پیکربندی APIهای چنل گزارش و وب‌هوک"
+              >
+                <Zap className="w-3.5 h-3.5 text-cyan-400" />
+                <span>تنظیمات API چنل</span>
+              </button>
+            )}
+
             <button
               onClick={handlePostNow}
               disabled={postingNow}
