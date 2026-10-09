@@ -174,7 +174,6 @@ export class PriceService {
   private static liveTickerInterval: NodeJS.Timeout | null = null;
   private static providerHealth = new Map<string, ProviderHealth>();
 
-  // Price history for computing real change % when provider reports 0
   private static priceHistory = new Map<string, Array<{ price: number; ts: number }>>();
   private static readonly HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   private static readonly HISTORY_MAX_POINTS = 500;
@@ -344,10 +343,6 @@ export class PriceService {
     return this.isValidNumber(p) && p > 0 && p < 10_000_000;
   }
 
-  // ==========================================================================
-  // PRICE HISTORY
-  // ==========================================================================
-
   private static recordPrice(key: string, price: number): void {
     if (!this.isValidNumber(price) || price <= 0) return;
     const now = Date.now();
@@ -377,10 +372,6 @@ export class PriceService {
     if (Math.abs(pct) > 50) return null;
     return parseFloat(pct.toFixed(2));
   }
-
-  // ==========================================================================
-  // MAIN SNAPSHOT
-  // ==========================================================================
 
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
     const now = Date.now();
@@ -469,6 +460,32 @@ export class PriceService {
       console.warn('[PriceService] Binance enrichment failed, continuing:', e?.message || e);
     }
 
+    // ─── NEW FIX: Add legacy stablecoins as derived from dollar ─────────────
+    // BUSD, FDUSD, TUSD, etc. are pegged 1:1 to USD. Since they're no longer
+    // commonly traded on exchanges, we derive their Toman price from the
+    // current dollar rate so users can still query them and get a valid card.
+    if (dollarData.isLive && dollarData.toman > 0) {
+      const legacyStables = ['busd', 'fdusd', 'tusd', 'usdd', 'usdp', 'gusd', 'lusd', 'frax'];
+      for (const stable of legacyStables) {
+        if (!coins[stable] && !coins[stable.toUpperCase()]) {
+          const tomanPrice = Math.round(dollarData.toman);
+          const coin: CoinInfo = {
+            name: PERSIAN_NAMES[stable.toUpperCase()] || stable.toUpperCase(),
+            symbol: stable.toUpperCase(),
+            usdt: 1.0,
+            irr: tomanPrice,
+            dayChange: 0,
+            source: 'derived',
+            isDerived: true,
+          };
+          coins[stable] = coin;
+          coins[stable.toUpperCase()] = coin;
+          this.recordPrice(stable, tomanPrice);
+        }
+      }
+    }
+    // ────────────────────────────────────────────────────────────────────────
+
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
     const oil = this.extractOil(tgjuRes.data);
 
@@ -517,7 +534,7 @@ export class PriceService {
 
     if (isLive || this.unifiedSnapshot === null) {
       this.unifiedSnapshot = snapshot;
-      this.lastSnapshotTime = Date.now();   // FIX: end-time of fetch, not start
+      this.lastSnapshotTime = Date.now();
     } else if (this.unifiedSnapshot) {
       console.warn('[PriceService] all providers failed — keeping last known snapshot');
       this.unifiedSnapshot.metadata.isStale = true;
@@ -526,10 +543,6 @@ export class PriceService {
     }
     return snapshot;
   }
-
-  // ==========================================================================
-  // EXTRACTORS
-  // ==========================================================================
 
   private static extractTether(cryptoData: any, fallbackDayChange: number = 0): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
@@ -896,10 +909,6 @@ export class PriceService {
     return list;
   }
 
-  // ==========================================================================
-  // PUBLIC LOOKUPS
-  // ==========================================================================
-
   static async getOilPrice(type: 'brent' | 'wti' | 'gas' = 'brent'): Promise<AssetInfo> {
     const snap = await this.getUnifiedMarketSnapshot();
     const key = (type || 'brent').toLowerCase();
@@ -1026,10 +1035,6 @@ export class PriceService {
     return picked.slice(0, 9);
   }
 
-  // ==========================================================================
-  // CHARTS — FIXED for stablecoins
-  // ==========================================================================
-
   static async get7DayChartData(
     symbol: string,
     currentPrice: number,
@@ -1038,8 +1043,7 @@ export class PriceService {
   ): Promise<Chart7DayData> {
     const cleanSym = (symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
-    // Stablecoins excluded — Binance has no USDTUSDT pair
-    const STABLES = ['USDT', 'USDC', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD'];
+    const STABLES = ['USDT', 'USDC', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDD', 'USDP', 'GUSD', 'LUSD', 'FRAX'];
 
     const isCrypto = !(
       cleanSym.startsWith('GOLD') || cleanSym.startsWith('SEKE') || cleanSym.startsWith('SILVER') ||
@@ -1050,7 +1054,6 @@ export class PriceService {
       STABLES.includes(cleanSym)
     );
 
-    // 1. Try real Binance klines
     if (isCrypto && cleanSym) {
       try {
         const r = await this.fetchJson(
@@ -1078,7 +1081,6 @@ export class PriceService {
       }
     }
 
-    // 2. ALWAYS return valid points (even for stablecoins and non-crypto)
     const fallbackPrice = currentPrice > 0 ? currentPrice : 1000;
     const safeDayChange = Number.isFinite(dayChange) ? dayChange : 0;
     const openPrice = safeDayChange !== 0 ? fallbackPrice / (1 + safeDayChange / 100) : fallbackPrice;
@@ -1103,10 +1105,6 @@ export class PriceService {
       isSynthetic: true,
     };
   }
-
-  // ==========================================================================
-  // MINI APP DATA
-  // ==========================================================================
 
   static async getMiniAppData(): Promise<{
     highlights: any[]; crypto: any[]; gold: any[]; fiat: any[]; oil: any[];
