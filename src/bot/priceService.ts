@@ -1,79 +1,51 @@
 import { BotStorage } from './storage';
-import { MANUAL_ALIASES, UNIFIED_DEFAULT_MARKET } from './config';
+import { MANUAL_ALIASES } from './config';
 
 // ============================================================================
-// PHASE 2-6: HARDENED PRICE SERVICE WITH VALIDATION, DEDUPLICATION, & METADATA
+// PRICE SERVICE — Production-grade market data pipeline
+// ============================================================================
+//
+// Design principles:
+//   1. Single authoritative snapshot for all consumers (bot, miniapp, REST, channel)
+//   2. Every price has an explicit currency unit (IRR, TOMAN, USD, USDT, gram, ...)
+//   3. No hardcoded fallback is EVER presented as a live price
+//   4. Provider errors are logged, tracked, and surfaced via metadata
+//   5. Stale data is explicitly marked; unavailable data returns unavailable state
+//   6. USD free-market rate and USDT are independent assets
+//
+// Unit conventions (internal storage):
+//   - All Toman prices are stored as integers (rounded)
+//   - All USD prices are stored as floats
+//   - TGJU returns RIAL → we divide by 10 exactly once (RIALS_PER_TOMAN)
+//   - Nobitex returns RIAL for *-rls pairs → divide by 10
+//   - Wallex returns TOMAN for *TMN pairs → use as-is
 // ============================================================================
 
-/**
- * Provider Health Status: tracks API availability, rate limit state, and freshness
- */
-export interface ProviderHealthStatus {
-  provider: string;
-  isHealthy: boolean;
-  lastSuccessTime: number; // timestamp
-  lastErrorTime: number; // timestamp
-  lastErrorMessage: string;
-  consecutiveFailures: number;
-  rateLimitHits: number;
-  rateLimitResetTime?: number;
-}
+const RIALS_PER_TOMAN = 10;
+const CACHE_TTL_MS = 5_000;              // How long a snapshot is considered fresh
+const LIVE_TICKER_INTERVAL_MS = 15_000;  // Background refresh interval (was 1.5s — too aggressive)
+const FETCH_TIMEOUT_MS = 3_500;
+const STALE_THRESHOLD_MS = 5 * 60_000;   // After 5 min without refresh, data is stale
 
-/**
- * Snapshot Metadata: distinguishes live data from stale fallback and unavailable
- */
-export interface SnapshotMetadata {
-  fetchedAt: number; // timestamp when fetched
-  isLive: boolean; // true if all primary sources responded successfully
-  isStale: boolean; // true if using cached data > 5 min old
-  unavailableAssets: string[]; // which assets could not be fetched from any provider
-  primaryProviders: { [key: string]: string }; // asset -> provider mapping
-  errors: string[]; // concatenated list of all errors during this fetch
-}
-
-/**
- * Enhanced snapshot: all assets with live/stale/unavailable flags
- */
-export interface UnifiedMarketSnapshot {
-  timestamp: number;
-  serverTime: string;
-  persianTime: string;
-  metadata: SnapshotMetadata;
-  
-  tether: {
-    toman: number;
-    usd: number;
-    dayChange: number;
-    highToman: number;
-    lowToman: number;
-    source: string;
-  };
-  dollar: {
-    toman: number;
-    usd: number;
-    dayChange: number;
-    highToman: number;
-    lowToman: number;
-  };
-  gold: Record<string, GoldInfo>;
-  oil: Record<string, AssetInfo>;
-  coins: Record<string, CoinInfo>;
-  fiat: Record<string, AssetInfo>;
-}
+// ============================================================================
+// PUBLIC INTERFACES
+// ============================================================================
 
 export interface CoinInfo {
   name?: string;
   symbol?: string;
-  usdt: number;
-  irr: number;
-  dayChange: number;
+  usdt: number;             // USD price of 1 unit
+  irr: number;              // Toman price of 1 unit
+  dayChange: number;        // percent, e.g. 1.25 = +1.25%
   dayHighToman?: number;
   dayLowToman?: number;
   dayHighUsd?: number;
   dayLowUsd?: number;
   chartUrl?: string;
-  isStale?: boolean; // marks stale data
-  unavailable?: boolean; // marks failed fetches
+  isStale?: boolean;
+  isDerived?: boolean;      // true if computed (e.g. toman = usd * tether), not sourced directly
+  unavailable?: boolean;    // true if no reliable source returned data
+  source?: string;
 }
 
 export interface GoldInfo {
@@ -84,7 +56,9 @@ export interface GoldInfo {
   dayChangePercent: number;
   dayChangeRaw?: string;
   isStale?: boolean;
+  isDerived?: boolean;
   unavailable?: boolean;
+  source?: string;
 }
 
 export interface Chart7DayData {
@@ -94,6 +68,10 @@ export interface Chart7DayData {
   weekChangePercent: number;
   startPrice: number;
   currentPrice: number;
+  /** Where the series came from: 'binance' (real) or 'derived' (synthetic, shown only as a hint) */
+  source?: 'binance' | 'derived' | 'unavailable';
+  /** true if points were synthesised. Frontend must not present as real history. */
+  isSynthetic?: boolean;
 }
 
 export interface AssetInfo {
@@ -110,261 +88,109 @@ export interface AssetInfo {
   lowUsd?: number;
   unit?: string;
   isStale?: boolean;
+  isDerived?: boolean;
   unavailable?: boolean;
 }
 
-export class PriceService {
-  // Unified snapshot cache and state management
-  private static unifiedSnapshot: UnifiedMarketSnapshot | null = null;
-  private static lastSnapshotTime: number = 0;
-  private static isFetchingSnapshot: boolean = false;
-  private static snapshotFetchPromise: Promise<UnifiedMarketSnapshot> | null = null;
+export interface ProviderHealth {
+  provider: string;
+  lastAttemptAt: number;
+  lastSuccessAt: number;
+  lastErrorAt: number;
+  lastErrorMessage: string;
+  consecutiveFailures: number;
+  totalSuccesses: number;
+  totalFailures: number;
+}
 
-  // Live ticker for background refresh
+export interface SnapshotMetadata {
+  fetchedAt: number;        // when this snapshot object was built
+  generatedAt: number;      // alias for fetchedAt (kept for compat with earlier drafts)
+  isLive: boolean;          // at least one primary provider returned fresh data
+  isStale: boolean;         // serving a cached snapshot older than STALE_THRESHOLD_MS
+  ageMs: number;            // how old the underlying data is
+  unavailableAssets: string[];
+  providers: Record<string, {
+    status: 'healthy' | 'degraded' | 'unavailable';
+    lastSuccessAt: number;
+    consecutiveFailures: number;
+  }>;
+  errors: string[];
+}
+
+export interface UnifiedMarketSnapshot {
+  timestamp: number;
+  serverTime: string;
+  persianTime: string;
+  metadata: SnapshotMetadata;
+  tether: {
+    toman: number;
+    usd: number;
+    dayChange: number;
+    highToman: number;
+    lowToman: number;
+    source: string;
+    isStale?: boolean;
+    unavailable?: boolean;
+  };
+  dollar: {
+    toman: number;
+    usd: number;
+    dayChange: number;
+    highToman: number;
+    lowToman: number;
+    source: string;
+    isStale?: boolean;
+    unavailable?: boolean;
+  };
+  gold: Record<string, GoldInfo>;
+  oil: Record<string, AssetInfo>;
+  coins: Record<string, CoinInfo>;
+  fiat: Record<string, AssetInfo>;
+}
+
+// ============================================================================
+// PRICE SERVICE
+// ============================================================================
+
+export class PriceService {
+  // Snapshot cache
+  private static unifiedSnapshot: UnifiedMarketSnapshot | null = null;
+  private static lastSnapshotTime = 0;
+  private static inflightPromise: Promise<UnifiedMarketSnapshot> | null = null;
   private static liveTickerInterval: NodeJS.Timeout | null = null;
 
-  // Provider health tracking
-  private static providerHealth = new Map<string, ProviderHealthStatus>();
+  // Per-provider caches with timestamps
+  private static tgjuCache: { data: any; ts: number } = { data: null, ts: 0 };
+  private static wallexCache: { data: any; ts: number } = { data: null, ts: 0 };
+  private static nobitexCache: { data: any; ts: number } = { data: null, ts: 0 };
 
-  // Individual provider caches with freshness tracking
-  private static cachedTgju: any = null;
-  private static lastTgjuFetchTime: number = 0;
-  private static cachedWallex: any = null;
-  private static lastWallexFetchTime: number = 0;
-  private static cachedSecondaryCrypto: any = null;
-  private static lastSecondaryCryptoFetchTime: number = 0;
+  // Provider health map (internal)
+  private static providerHealth = new Map<string, ProviderHealth>();
 
-  // Rate limiting per provider
-  private static rateLimitState = new Map<string, { resets_at: number; remaining: number }>();
-
-  /**
-   * PHASE 2: Initialize provider health tracking
-   */
-  static initProviderHealth(): void {
-    const providers = [
-      'fast_creat_gold',
-      'tgju_gold',
-      'wallex_crypto',
-      'fast_creat_crypto',
-      'nobitex_crypto',
-    ];
-    for (const provider of providers) {
-      if (!this.providerHealth.has(provider)) {
-        this.providerHealth.set(provider, {
-          provider,
-          isHealthy: true,
-          lastSuccessTime: 0,
-          lastErrorTime: 0,
-          lastErrorMessage: '',
-          consecutiveFailures: 0,
-          rateLimitHits: 0,
-        });
-      }
-    }
-  }
+  // ---------------------------------------------------------------------------
+  // Lifecycle
+  // ---------------------------------------------------------------------------
 
   static clearCache(): void {
     this.unifiedSnapshot = null;
     this.lastSnapshotTime = 0;
+    this.tgjuCache = { data: null, ts: 0 };
+    this.wallexCache = { data: null, ts: 0 };
+    this.nobitexCache = { data: null, ts: 0 };
   }
 
-  /**
-   * PHASE 2: Validate response structure before use
-   */
-  private static isValidTetherPrice(price: any): boolean {
-    if (!price || typeof price !== 'number') return false;
-    // Tether should be in range 260,000 - 450,000 tomans (realistic bounds)
-    return price > 250000 && price < 500000;
-  }
-
-  private static isValidGoldPrice(price: any): boolean {
-    if (!price || typeof price !== 'number') return false;
-    // Gold 18k should be > 1M tomans
-    return price > 1000000 && price < 200000000;
-  }
-
-  private static isValidCryptoPrice(
-    symbolUsd: number | undefined,
-    symbolIrr: number | undefined,
-    tetherToman: number
-  ): boolean {
-    // At least one price must be present and reasonable
-    if (symbolUsd && (symbolUsd < 0.00001 || symbolUsd > 1000000)) return false;
-    if (symbolIrr && (symbolIrr < 1000 || symbolIrr > tetherToman * 1000)) return false;
-    return (symbolUsd && symbolUsd > 0) || (symbolIrr && symbolIrr > 0);
-  }
-
-  /**
-   * PHASE 2: Parse numerical strings with strict validation
-   */
-  static parseNumberFromRaw(raw: any): number {
-    if (raw === undefined || raw === null) return 0;
-    const val = typeof raw === 'object' ? raw.p : raw;
-    if (typeof val === 'number') return val;
-    const parsed = parseFloat(String(val || '0').replace(/,/g, '').trim());
-    return isNaN(parsed) ? 0 : parsed;
-  }
-
-  /**
-   * PHASE 3: Convert Persian/Arabic digits to English
-   */
-  static faNumToEn(text: string): string {
-    if (!text) return '';
-    const faDigits = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
-    const arDigits = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-    const enDigits = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-
-    let result = String(text);
-    for (let i = 0; i < 10; i++) {
-      result = result.replaceAll(faDigits[i], enDigits[i]);
-      result = result.replaceAll(arDigits[i], enDigits[i]);
-    }
-    return result;
-  }
-
-  /**
-   * PHASE 3: Format number with proper commas
-   */
-  static formatNumber(number: number, decimals = 2): string {
-    if (isNaN(number) || number === null || number === undefined) return '0';
-    return number.toLocaleString('en-US', {
-      minimumFractionDigits: 0,
-      maximumFractionDigits: decimals,
-    });
-  }
-
-  /**
-   * PHASE 3: Parse natural language queries with Persian/English support
-   */
-  static parseNaturalQuery(raw: string): {
-    cleanKey: string;
-    amount: number;
-    isQuestion: boolean;
-    isOverviewRequest: boolean;
-    isMiniAppRequest: boolean;
-    isGreetingOrHelp: boolean;
-  } {
-    if (!raw) {
-      return {
-        cleanKey: '',
-        amount: 1,
-        isQuestion: false,
-        isOverviewRequest: false,
-        isMiniAppRequest: false,
-        isGreetingOrHelp: false,
-      };
-    }
-
-    let text = this.faNumToEn(raw.trim().toLowerCase());
-    text = text.replace(/@[a-z0-9_]+/gi, '').trim();
-
-    const isGreetingOnly = /^(?:سلام|درود|وقت\s+بخیر)$/i.test(text.replace(/[؟!?.؛:،,]+/g, '').trim());
-    const isHelpOnly = /^(?:راهنما|کمک|دستورات)$/i.test(text.replace(/[؟!?.؛:،,]+/g, '').trim());
-    const overviewKeywords = [
-      'بازار', 'ارز', 'لیست', 'کریپتو', 'مارکت', 'گزارش', 'تابلو', 'قیمت‌ها',
-    ];
-    const isOverview = overviewKeywords.some((k) => text.includes(k));
-    const isMiniApp = /مینی|اپ|برنامه/i.test(text);
-
-    // Strip conversational starters
-    let loopGuard = 0;
-    const starterRegex = /^(?:سلام|درود|وقت\s+بخیر)\s+/;
-    while (starterRegex.test(text) && loopGuard++ < 5) {
-      text = text.replace(starterRegex, '').trim();
-    }
-
-    text = text.replace(/[؟?!؛:،,]+/g, ' ').replace(/[.!?]+$/g, '').trim();
-    if (text.startsWith('/')) text = text.substring(1).trim();
-
-    // Extract amount
-    let amount = 1;
-    const numMatch = text.match(/^(\d+(?:\.\d+)?)\s*(?:تا|عدد|گرم)?\s*(.+)$/);
-    if (numMatch && !text.includes('نیم') && !text.includes('ربع')) {
-      amount = parseFloat(numMatch[1]) || 1;
-      text = numMatch[2].trim();
-    }
-
-    return {
-      cleanKey: text,
-      amount: amount > 0 ? amount : 1,
-      isQuestion: raw.includes('؟') || raw.includes('?'),
-      isOverviewRequest: isOverview,
-      isMiniAppRequest: isMiniApp,
-      isGreetingOrHelp: isGreetingOnly || isHelpOnly,
-    };
-  }
-
-  /**
-   * PHASE 2: Fetch with timeout and strict error handling
-   */
-  private static async fetchJson(
-    url: string,
-    timeoutMs: number = 3500
-  ): Promise<{ data: any; error?: string; statusCode?: number }> {
-    if (!url) return { data: null, error: 'Empty URL' };
-
-    try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent':
-            'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-        },
-      }).catch((err) => {
-        clearTimeout(timer);
-        return null;
-      });
-
-      clearTimeout(timer);
-
-      if (!res) return { data: null, error: 'Network timeout' };
-      if (!res.ok) {
-        const text = await res.text().catch(() => '');
-        return { data: null, error: `HTTP ${res.status}`, statusCode: res.status };
-      }
-
-      const data = await res.json().catch(() => null);
-      if (!data) return { data: null, error: 'Invalid JSON response' };
-
-      return { data };
-    } catch (err: any) {
-      return { data: null, error: err.message || String(err) };
-    }
-  }
-
-  /**
-   * PHASE 2: Fetch with fallback support
-   */
-  private static async fetchWithFallback(
-    primaryUrl: string,
-    secondaryUrl?: string,
-    timeoutMs: number = 3500
-  ): Promise<{ data: any; provider: string; error?: string }> {
-    const primary = await this.fetchJson(primaryUrl, timeoutMs);
-    if (primary.data) return { data: primary.data, provider: 'primary' };
-
-    if (secondaryUrl && secondaryUrl !== primaryUrl) {
-      const secondary = await this.fetchJson(secondaryUrl, timeoutMs);
-      if (secondary.data) return { data: secondary.data, provider: 'secondary' };
-      return { data: null, provider: 'none', error: `Both APIs failed: primary=${primary.error}, secondary=${secondary.error}` };
-    }
-
-    return { data: null, provider: 'none', error: primary.error };
-  }
-
-  /**
-   * PHASE 4: Start live background ticker
-   */
   static startLiveTicker(): void {
     if (this.liveTickerInterval) return;
-    this.getUnifiedMarketSnapshot().catch(() => {});
+    // Fire immediately, then every LIVE_TICKER_INTERVAL_MS
+    this.getUnifiedMarketSnapshot().catch((e) =>
+      console.error('[PriceService] initial ticker fetch failed:', e?.message || e)
+    );
     this.liveTickerInterval = setInterval(() => {
-      this.getUnifiedMarketSnapshot().catch(() => {});
-    }, 1500);
+      this.getUnifiedMarketSnapshot().catch((e) =>
+        console.error('[PriceService] ticker fetch failed:', e?.message || e)
+      );
+    }, LIVE_TICKER_INTERVAL_MS);
   }
 
   static stopLiveTicker(): void {
@@ -374,472 +200,916 @@ export class PriceService {
     }
   }
 
-  /**
-   * PHASE 5: Deduplication - prevent concurrent snapshot fetches
-   */
-  private static async getSnapshotWithDeduplication(): Promise<UnifiedMarketSnapshot> {
-    // If already fetching, return the same promise (deduplication)
-    if (this.isFetchingSnapshot && this.snapshotFetchPromise) {
-      return this.snapshotFetchPromise;
-    }
+  // ---------------------------------------------------------------------------
+  // Provider health tracking
+  // ---------------------------------------------------------------------------
 
-    // Create fetch promise and store it
-    const promise = this._fetchUnifiedSnapshot();
-    this.snapshotFetchPromise = promise;
-    this.isFetchingSnapshot = true;
+  private static markProviderSuccess(name: string): void {
+    const h = this.providerHealth.get(name) || {
+      provider: name,
+      lastAttemptAt: 0,
+      lastSuccessAt: 0,
+      lastErrorAt: 0,
+      lastErrorMessage: '',
+      consecutiveFailures: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+    };
+    h.lastAttemptAt = Date.now();
+    h.lastSuccessAt = Date.now();
+    h.consecutiveFailures = 0;
+    h.totalSuccesses += 1;
+    this.providerHealth.set(name, h);
+  }
+
+  private static markProviderFailure(name: string, errorMessage: string): void {
+    const h = this.providerHealth.get(name) || {
+      provider: name,
+      lastAttemptAt: 0,
+      lastSuccessAt: 0,
+      lastErrorAt: 0,
+      lastErrorMessage: '',
+      consecutiveFailures: 0,
+      totalSuccesses: 0,
+      totalFailures: 0,
+    };
+    h.lastAttemptAt = Date.now();
+    h.lastErrorAt = Date.now();
+    h.lastErrorMessage = errorMessage.slice(0, 200);
+    h.consecutiveFailures += 1;
+    h.totalFailures += 1;
+    this.providerHealth.set(name, h);
+    console.warn(`[PriceService] provider "${name}" failed (${h.consecutiveFailures}x): ${errorMessage}`);
+  }
+
+  private static getProviderStatus(name: string): 'healthy' | 'degraded' | 'unavailable' {
+    const h = this.providerHealth.get(name);
+    if (!h || h.totalSuccesses === 0) return 'unavailable';
+    if (h.consecutiveFailures === 0) return 'healthy';
+    if (h.consecutiveFailures < 3) return 'degraded';
+    return 'unavailable';
+  }
+
+  private static getProviderSummary(): SnapshotMetadata['providers'] {
+    const out: SnapshotMetadata['providers'] = {};
+    for (const [name, h] of this.providerHealth.entries()) {
+      out[name] = {
+        status: this.getProviderStatus(name),
+        lastSuccessAt: h.lastSuccessAt,
+        consecutiveFailures: h.consecutiveFailures,
+      };
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Fetch helpers with timeout + structured errors
+  // ---------------------------------------------------------------------------
+
+  private static async fetchJson(
+    url: string,
+    timeoutMs: number = FETCH_TIMEOUT_MS
+  ): Promise<{ data: any; error?: string; status?: number }> {
+    if (!url) return { data: null, error: 'empty url' };
 
     try {
-      const result = await promise;
-      return result;
-    } finally {
-      this.isFetchingSnapshot = false;
-      this.snapshotFetchPromise = null;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      const res = await fetch(url, {
+        signal: controller.signal,
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+          'Accept': 'application/json, text/plain, */*',
+        },
+      }).catch((err) => {
+        clearTimeout(timer);
+        throw err;
+      });
+
+      clearTimeout(timer);
+
+      if (!res.ok) {
+        return { data: null, error: `HTTP ${res.status}`, status: res.status };
+      }
+
+      const data = await res.json().catch(() => null);
+      if (data === null) return { data: null, error: 'invalid JSON' };
+      return { data };
+    } catch (e: any) {
+      const msg = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || String(e));
+      return { data: null, error: msg };
     }
   }
 
-  /**
-   * PHASE 1: Authoritative Unified Market Snapshot
-   * Returns one authoritative snapshot for all consumers (bot, miniapp, channel, REST API)
-   */
+  private static async fetchWithFallback(
+    primaryUrl: string,
+    secondaryUrl: string | undefined,
+    timeoutMs: number = FETCH_TIMEOUT_MS
+  ): Promise<{ data: any; from: 'primary' | 'secondary' | 'none'; error?: string }> {
+    const primary = await this.fetchJson(primaryUrl, timeoutMs);
+    if (primary.data) return { data: primary.data, from: 'primary' };
+
+    if (secondaryUrl && secondaryUrl !== primaryUrl) {
+      const secondary = await this.fetchJson(secondaryUrl, timeoutMs);
+      if (secondary.data) return { data: secondary.data, from: 'secondary' };
+      return { data: null, from: 'none', error: `primary: ${primary.error}; secondary: ${secondary.error}` };
+    }
+
+    return { data: null, from: 'none', error: primary.error };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Validation
+  // ---------------------------------------------------------------------------
+
+  private static isValidNumber(n: any): n is number {
+    return typeof n === 'number' && Number.isFinite(n) && !Number.isNaN(n);
+  }
+
+  private static isValidTetherPrice(p: any): boolean {
+    return this.isValidNumber(p) && p > 100_000 && p < 2_000_000;
+  }
+
+  private static isValidGold18Price(p: any): boolean {
+    return this.isValidNumber(p) && p > 1_000_000 && p < 500_000_000;
+  }
+
+  private static isValidCoinUsd(p: any): boolean {
+    return this.isValidNumber(p) && p > 0 && p < 10_000_000;
+  }
+
+  // ==========================================================================
+  // MAIN SNAPSHOT BUILDER
+  // ==========================================================================
+
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
     const now = Date.now();
 
-    // PHASE 4: Cache for 1500ms for responsiveness while staying live
-    if (this.unifiedSnapshot && now - this.lastSnapshotTime < 1500) {
+    // Serve cached snapshot if fresh
+    if (this.unifiedSnapshot && now - this.lastSnapshotTime < CACHE_TTL_MS) {
       return this.unifiedSnapshot;
     }
 
-    // PHASE 5: Deduplication
-    return this.getSnapshotWithDeduplication();
+    // Deduplicate concurrent refreshes
+    if (this.inflightPromise) {
+      return this.inflightPromise;
+    }
+
+    this.inflightPromise = this._fetchUnifiedSnapshot();
+    try {
+      return await this.inflightPromise;
+    } finally {
+      this.inflightPromise = null;
+    }
   }
 
   private static async _fetchUnifiedSnapshot(): Promise<UnifiedMarketSnapshot> {
-    const now = Date.now();
-    const errorLog: string[] = [];
-    const metadata: SnapshotMetadata = {
-      fetchedAt: now,
-      isLive: false,
-      isStale: this.unifiedSnapshot ? now - this.lastSnapshotTime > 5 * 60 * 1000 : false,
-      unavailableAssets: [],
-      primaryProviders: {},
-      errors: [],
+    const fetchStart = Date.now();
+    const errors: string[] = [];
+    const unavailable: string[] = [];
+
+    const hubConfig = BotStorage.getApiHubConfig();
+    const goldUrl = hubConfig?.priceBoard?.goldApiUrl || '';
+    const goldSecondaryUrl = hubConfig?.priceBoard?.goldSecondaryApiUrl || '';
+    const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
+    const cryptoSecUrl = hubConfig?.priceBoard?.cryptoSecondaryApiUrl || '';
+
+    // ---- 1. Fetch all providers in parallel --------------------------------
+    const [goldRes, cryptoPrimaryRes, cryptoSecondaryRes] = await Promise.all([
+      goldUrl
+        ? this.fetchWithFallback(goldUrl, goldSecondaryUrl, FETCH_TIMEOUT_MS)
+        : Promise.resolve({ data: null, from: 'none' as const, error: 'no url' }),
+      cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
+      cryptoSecUrl ? this.fetchJson(cryptoSecUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
+    ]);
+
+    // ---- 2. Provider health ------------------------------------------------
+    if (goldRes.data) this.markProviderSuccess('gold'); else this.markProviderFailure('gold', goldRes.error || 'unknown');
+    if (cryptoPrimaryRes.data) this.markProviderSuccess('crypto_primary'); else this.markProviderFailure('crypto_primary', cryptoPrimaryRes.error || 'unknown');
+    if (cryptoSecondaryRes.data) this.markProviderSuccess('crypto_secondary'); else this.markProviderFailure('crypto_secondary', cryptoSecondaryRes.error || 'unknown');
+
+    if (!goldRes.data) errors.push(`gold provider: ${goldRes.error}`);
+    if (!cryptoPrimaryRes.data) errors.push(`crypto primary: ${cryptoPrimaryRes.error}`);
+    if (!cryptoSecondaryRes.data) errors.push(`crypto secondary: ${cryptoSecondaryRes.error}`);
+
+    // ---- 3. Extract TETHER (USDT) -----------------------------------------
+    const tetherData = this.extractTether(cryptoPrimaryRes.data, cryptoSecondaryRes.data);
+    if (!tetherData.isLive) unavailable.push('usdt');
+
+    // ---- 4. Extract DOLLAR (independent from tether) ----------------------
+    const dollarData = this.extractDollar(goldRes.data);
+    if (!dollarData.isLive) unavailable.push('usd');
+
+    // ---- 5. Extract GOLD, COINS -------------------------------------------
+    const goldBundle = this.extractGold(goldRes.data);
+    if (!goldBundle.gold18.isLive) unavailable.push('gold18');
+    if (!goldBundle.sekeEmami.isLive) unavailable.push('sekeEmami');
+
+    // ---- 6. Extract COINS (crypto) ----------------------------------------
+    const coins = this.extractCoins(cryptoPrimaryRes.data, cryptoSecondaryRes.data, tetherData.toman);
+
+    // ---- 7. Extract FIAT (derived from dollar) ----------------------------
+    const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
+
+    // ---- 8. Extract OIL ----------------------------------------------------
+    const oil = this.extractOil(goldRes.data);
+
+    // ---- 9. Build snapshot -------------------------------------------------
+    const snapshotAge = fetchStart - (this.lastSnapshotTime || fetchStart);
+    const isStale = this.unifiedSnapshot !== null && snapshotAge > STALE_THRESHOLD_MS;
+
+    const nowIso = new Date().toISOString();
+    let persianTime = nowIso;
+    try {
+      persianTime = new Intl.DateTimeFormat('fa-IR', {
+        timeZone: 'Asia/Tehran',
+        hour: '2-digit', minute: '2-digit', second: '2-digit',
+      }).format(new Date());
+    } catch { /* ignore */ }
+
+    // Build all gold entries (no fabricated values; missing ones marked unavailable)
+    const goldRecord: Record<string, GoldInfo> = {
+      gold18: goldBundle.gold18.toGoldInfo(),
+      gold24: goldBundle.gold24.toGoldInfo(),
+      mesghal: goldBundle.mesghal.toGoldInfo(),
+      sekeEmami: goldBundle.sekeEmami.toGoldInfo(),
+      sekeBahar: goldBundle.sekeBahar.toGoldInfo(),
+      sekeNim: goldBundle.sekeNim.toGoldInfo(),
+      sekeRob: goldBundle.sekeRob.toGoldInfo(),
+      sekeGerami: goldBundle.sekeGerami.toGoldInfo(),
+      silver: goldBundle.silver.toGoldInfo(),
+      ons: goldBundle.ons.toGoldInfo(),
     };
 
-    try {
-      const hubConfig = BotStorage.getApiHubConfig();
+    const snapshot: UnifiedMarketSnapshot = {
+      timestamp: fetchStart,
+      serverTime: nowIso,
+      persianTime,
+      metadata: {
+        fetchedAt: fetchStart,
+        generatedAt: fetchStart,
+        isLive: tetherData.isLive || dollarData.isLive || goldBundle.gold18.isLive,
+        isStale,
+        ageMs: Date.now() - fetchStart,
+        unavailableAssets: unavailable,
+        providers: this.getProviderSummary(),
+        errors,
+      },
+      tether: {
+        toman: tetherData.toman,
+        usd: 1.0,
+        dayChange: tetherData.dayChange,
+        highToman: tetherData.highToman,
+        lowToman: tetherData.lowToman,
+        source: tetherData.source,
+        isStale: !tetherData.isLive,
+        unavailable: !tetherData.isLive,
+      },
+      dollar: {
+        toman: dollarData.toman,
+        usd: 1.0,
+        dayChange: dollarData.dayChange,
+        highToman: dollarData.highToman,
+        lowToman: dollarData.lowToman,
+        source: dollarData.source,
+        isStale: !dollarData.isLive,
+        unavailable: !dollarData.isLive,
+      },
+      gold: goldRecord,
+      oil,
+      coins,
+      fiat,
+    };
 
-      // PHASE 2: Validate provider URLs exist
-      const goldUrl = hubConfig?.priceBoard?.goldApiUrl;
-      const goldSecUrl = hubConfig?.priceBoard?.goldSecondaryApiUrl;
-      const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl;
-      const cryptoSecUrl = hubConfig?.priceBoard?.cryptoSecondaryApiUrl;
+    // Persist cache only if we have at least *something* live, OR we have no previous snapshot
+    if (snapshot.metadata.isLive || this.unifiedSnapshot === null) {
+      this.unifiedSnapshot = snapshot;
+      this.lastSnapshotTime = fetchStart;
+    } else if (this.unifiedSnapshot) {
+      // Keep serving previous (stale) snapshot but update its metadata to reflect the failed refresh
+      console.warn('[PriceService] all providers failed — keeping last known snapshot, marking as stale');
+      this.unifiedSnapshot.metadata.isStale = true;
+      this.unifiedSnapshot.metadata.errors = errors;
+      return this.unifiedSnapshot;
+    }
 
-      if (!goldUrl || !cryptoUrl) {
-        errorLog.push('Critical: Provider URLs not configured. Using fallback prices only.');
-        metadata.isStale = true;
+    return snapshot;
+  }
+
+  // ==========================================================================
+  // EXTRACTORS (pure functions that turn provider payloads into typed values)
+  // ==========================================================================
+
+  private static extractTether(primaryData: any, secondaryData: any): {
+    toman: number; dayChange: number; highToman: number; lowToman: number;
+    source: string; isLive: boolean;
+  } {
+    // A) FastCreat/Nobitex wrapper format: { result: { USDT: { irr, usdt, dayChange } } }
+    const nobitexUSDT =
+      primaryData?.result?.USDT ||
+      secondaryData?.result?.USDT;
+
+    if (nobitexUSDT?.irr) {
+      const pRials = parseFloat(String(nobitexUSDT.irr));
+      const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+      if (this.isValidTetherPrice(pToman)) {
+        const ch = parseFloat(String(nobitexUSDT.dayChange || '0')) || 0;
+        return {
+          toman: pToman,
+          dayChange: ch,
+          highToman: Math.round(pToman * 1.005),
+          lowToman: Math.round(pToman * 0.995),
+          source: 'nobitex',
+          isLive: true,
+        };
       }
+    }
 
-      // PHASE 2: Fetch with timeout and deduplication
-      const [goldRes, cryptoRes, secCryptoRes] = await Promise.all([
-        goldUrl ? this.fetchWithFallback(goldUrl, goldSecUrl, 3200) : Promise.resolve({ data: null, provider: 'none' }),
-        cryptoUrl ? this.fetchJson(cryptoUrl, 3200) : Promise.resolve({ data: null, error: 'No URL configured' }),
-        cryptoSecUrl ? this.fetchJson(cryptoSecUrl, 3200) : Promise.resolve({ data: null, error: 'No URL configured' }),
-      ]);
+    // B) Nobitex raw stats: { stats: { 'usdt-rls': { latest, dayChange } } }
+    const nobitexStats = primaryData?.stats || secondaryData?.stats;
+    if (nobitexStats?.['usdt-rls']?.latest) {
+      const pRials = parseFloat(nobitexStats['usdt-rls'].latest);
+      const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+      if (this.isValidTetherPrice(pToman)) {
+        const ch = parseFloat(nobitexStats['usdt-rls'].dayChange || '0') || 0;
+        return {
+          toman: pToman,
+          dayChange: ch,
+          highToman: Math.round(pToman * 1.005),
+          lowToman: Math.round(pToman * 0.995),
+          source: 'nobitex',
+          isLive: true,
+        };
+      }
+    }
 
-      // Collect errors
-      if (goldRes.error) errorLog.push(`Gold API: ${goldRes.error}`);
-      if (cryptoRes.error) errorLog.push(`Crypto API: ${cryptoRes.error}`);
-      if (secCryptoRes.error) errorLog.push(`Secondary Crypto API: ${secCryptoRes.error}`);
+    // C) Wallex: { result: { symbols: { USDTTMN: { stats: { lastPrice, 24h_ch, 24h_highPrice, 24h_lowPrice } } } } }
+    const wallexSymbols =
+      primaryData?.result?.symbols || primaryData?.symbols ||
+      secondaryData?.result?.symbols || secondaryData?.symbols;
+    const usdtTmn = wallexSymbols?.USDTTMN?.stats;
+    if (usdtTmn?.lastPrice) {
+      const pToman = Math.round(parseFloat(usdtTmn.lastPrice));
+      if (this.isValidTetherPrice(pToman)) {
+        const ch = parseFloat(usdtTmn['24h_ch'] || '0') || 0;
+        const high = parseFloat(usdtTmn['24h_highPrice'] || '0');
+        const low = parseFloat(usdtTmn['24h_lowPrice'] || '0');
+        return {
+          toman: pToman,
+          dayChange: ch,
+          highToman: high > 0 ? Math.round(high) : Math.round(pToman * 1.005),
+          lowToman: low > 0 ? Math.round(low) : Math.round(pToman * 0.995),
+          source: 'wallex',
+          isLive: true,
+        };
+      }
+    }
 
-      // ========================================
-      // 1. EXTRACT TETHER (USDT) - PRIMARY ASSET
-      // ========================================
-      let tetherToman = UNIFIED_DEFAULT_MARKET.tetherToman;
-      let tetherChange = 0.6;
-      let tetherHigh = Math.round(tetherToman * 1.012);
-      let tetherLow = Math.round(tetherToman * 0.988);
-      let tetherSource = 'Fallback (APIs unavailable)';
-      let tetherIsLive = false;
+    // D) No source — return zero, DO NOT fabricate
+    return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
+  }
 
-      // A) Nobitex FastCreat format
-      const nobitexData = cryptoRes.data?.result || secCryptoRes.data?.result;
-      if (nobitexData?.USDT?.irr) {
-        const p = parseInt(String(nobitexData.USDT.irr), 10);
-        if (this.isValidTetherPrice(p)) {
-          tetherToman = p;
-          tetherChange = parseFloat(String(nobitexData.USDT.dayChange || '0.6')) || 0.6;
-          tetherHigh = Math.round(tetherToman * 1.012);
-          tetherLow = Math.round(tetherToman * 0.988);
-          tetherSource = 'Nobitex / FastCreat';
-          tetherIsLive = true;
-          metadata.primaryProviders['usdt'] = 'nobitex';
+  private static extractDollar(goldData: any): {
+    toman: number; dayChange: number; highToman: number; lowToman: number;
+    source: string; isLive: boolean;
+  } {
+    const current = goldData?.current || goldData?.data?.current;
+
+    // TGJU: price_dollar_rl is the free-market dollar in RIAL
+    const dollarField = current?.price_dollar_rl;
+    if (dollarField?.p) {
+      const pRials = this.parseNumberFromRaw(dollarField.p);
+      const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+      if (this.isValidTetherPrice(pToman)) {
+        const dp = parseFloat(String(dollarField.dp || dollarField.d || '0')) || 0;
+        const high = this.parseNumberFromRaw(dollarField.h);
+        const low = this.parseNumberFromRaw(dollarField.l);
+        return {
+          toman: pToman,
+          dayChange: dp,
+          highToman: high > 0 ? Math.round(high / RIALS_PER_TOMAN) : Math.round(pToman * 1.01),
+          lowToman: low > 0 ? Math.round(low / RIALS_PER_TOMAN) : Math.round(pToman * 0.99),
+          source: 'tgju',
+          isLive: true,
+        };
+      }
+    }
+
+    // No independent source available
+    return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
+  }
+
+  private static extractGold(goldData: any): {
+    gold18:        GoldExtract;
+    gold24:        GoldExtract;
+    mesghal:       GoldExtract;
+    sekeEmami:     GoldExtract;
+    sekeBahar:     GoldExtract;
+    sekeNim:       GoldExtract;
+    sekeRob:       GoldExtract;
+    sekeGerami:    GoldExtract;
+    silver:        GoldExtract;
+    ons:           GoldExtract;
+  } {
+    const empty = (title: string): GoldExtract => new GoldExtract(title, 0, 0, 0, 0, false, 'unavailable');
+
+    const g18  = empty('طلای ۱۸ عیار / 750');
+    const g24  = empty('طلای ۲۴ عیار');
+    const mes  = empty('مثقال طلا / آبشده نقدی');
+    const skE  = empty('سکه امامی');
+    const skB  = empty('سکه بهار آزادی');
+    const skN  = empty('نیم سکه');
+    const skR  = empty('ربع سکه');
+    const skG  = empty('سکه گرمی');
+    const silv = empty('نقره ۹۹۹');
+    const ons  = empty('انس جهانی طلا');
+
+    const current = goldData?.current || goldData?.data?.current;
+
+    // FastCreat gold array: { result: [{ title, price: ["rial", "(+1.2%)"], highest, lowest }, ...] }
+    const arr = goldData?.result;
+    if (Array.isArray(arr)) {
+      for (const item of arr) {
+        if (!item?.title) continue;
+        const title = String(item.title);
+        const pRials = parseInt(String(item.price?.[0] || '0').replace(/[^0-9]/g, ''), 10);
+        const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+        const chMatch = String(item.price?.[1] || '').match(/\(([+-]?\d+(?:\.\d+)?)%\)/);
+        const ch = chMatch ? parseFloat(chMatch[1]) : 0;
+        const highR = parseInt(String(item.highest || '0').replace(/[^0-9]/g, ''), 10);
+        const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
+        const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
+        const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
+
+        if (title.includes('18 عیار') && this.isValidGold18Price(pToman)) {
+          g18.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('۲۴ عیار') || title.includes('24 عیار')) {
+          g24.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('مثقال')) {
+          mes.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('امامی')) {
+          skE.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('بهار')) {
+          skB.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('نیم')) {
+          skN.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('ربع')) {
+          skR.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('گرمی')) {
+          skG.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('نقره')) {
+          silv.set(pToman, highT, lowT, ch, true, 'fast_creat');
         }
       }
+    }
 
-      // B) Wallex format
-      const wallexSymbols = cryptoRes.data?.result?.symbols || cryptoRes.data?.symbols || secCryptoRes.data?.result?.symbols || secCryptoRes.data?.symbols;
-      if (wallexSymbols?.USDTTMN?.stats && !tetherIsLive) {
-        const ws = wallexSymbols.USDTTMN.stats;
-        const wp = parseFloat(ws.lastPrice);
-        if (this.isValidTetherPrice(wp)) {
-          tetherToman = Math.round(wp);
-          tetherChange = parseFloat(ws['24h_ch']) || 0.6;
-          tetherHigh = Math.round(parseFloat(ws['24h_highPrice']) || tetherToman * 1.012);
-          tetherLow = Math.round(parseFloat(ws['24h_lowPrice']) || tetherToman * 0.988);
-          tetherSource = 'Wallex Exchange';
-          tetherIsLive = true;
-          metadata.primaryProviders['usdt'] = 'wallex';
-        }
-      }
+    // TGJU current object (values are RIALS)
+    if (current) {
+      const tg = (key: string, target: GoldExtract) => {
+        const f = current[key];
+        if (!f?.p) return;
+        const pToman = Math.round(this.parseNumberFromRaw(f.p) / RIALS_PER_TOMAN);
+        const high = Math.round(this.parseNumberFromRaw(f.h) / RIALS_PER_TOMAN);
+        const low  = Math.round(this.parseNumberFromRaw(f.l) / RIALS_PER_TOMAN);
+        const ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+        if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
+      };
+      tg('geram18', g18);
+      tg('geram24', g24);
+      tg('mesghal', mes);
+      tg('sekee', skE);
+      tg('sekeb', skB);
+      tg('nim', skN);
+      tg('rob', skR);
+      tg('gerami', skG);
+      tg('silver', silv);
+      tg('ons', ons);
+    }
 
-      if (tetherIsLive) {
-        metadata.isLive = true;
-      }
+    return {
+      gold18: g18, gold24: g24, mesghal: mes,
+      sekeEmami: skE, sekeBahar: skB, sekeNim: skN, sekeRob: skR, sekeGerami: skG,
+      silver: silv, ons: ons,
+    };
+  }
 
-      // Dollar harmonized with Tether
-      const dollarToman = tetherToman;
-      const dollarChange = tetherChange;
+  private static extractCoins(
+    primaryData: any,
+    secondaryData: any,
+    tetherToman: number
+  ): Record<string, CoinInfo> {
+    const coins: Record<string, CoinInfo> = {};
 
-      // ========================================
-      // 2. EXTRACT GOLD & PRECIOUS METALS
-      // ========================================
-      let gold18Toman = UNIFIED_DEFAULT_MARKET.gold18Toman;
-      let gold18Change = 0.32;
-      let gold18High = Math.round(gold18Toman * 1.01);
-      let gold18Low = Math.round(gold18Toman * 0.99);
-      let goldIsLive = false;
+    // --- FastCreat/Nobitex wrapper ---
+    const nobitexResult = primaryData?.result || secondaryData?.result;
+    if (nobitexResult && typeof nobitexResult === 'object') {
+      for (const [symKey, item] of Object.entries(nobitexResult)) {
+        if (symKey === 'USDT') continue;
+        const it: any = item;
+        if (!it || typeof it !== 'object') continue;
 
-      // A) FastCreat Gold Array Format
-      if (goldRes.data?.result && Array.isArray(goldRes.data.result)) {
-        for (const item of goldRes.data.result) {
-          if (!item.title) continue;
-          const pRials = parseInt(String(item.price?.[0] || '0').replace(/[^0-9]/g, ''), 10);
-          const pToman = Math.round(pRials / 10);
-          const chMatch = String(item.price?.[1] || '').match(/\(([+-]?\d+(?:\.\d+)?)\%\)/);
-          const chPct = chMatch ? parseFloat(chMatch[1]) : 0;
+        const sym = symKey.toUpperCase();
+        const rawIrr = parseFloat(String(it.irr || '0'));      // RIALS
+        const rawUsdt = parseFloat(String(it.usdt || '0'));
+        const dayCh = parseFloat(String(it.dayChange || '0')) || 0;
 
-          if (item.title.includes('18 عیار / 750') && this.isValidGoldPrice(pToman)) {
-            gold18Toman = pToman;
-            gold18Change = chPct;
-            gold18High = Math.round(pToman * 1.01);
-            gold18Low = Math.round(pToman * 0.99);
-            goldIsLive = true;
-            metadata.primaryProviders['gold18'] = 'fast_creat';
+        if (rawUsdt > 0 || rawIrr > 0) {
+          const finalToman = rawIrr > 0
+            ? Math.round(rawIrr / RIALS_PER_TOMAN)
+            : (tetherToman > 0 ? Math.round(rawUsdt * tetherToman) : 0);
+          const finalUsd = rawUsdt > 0
+            ? rawUsdt
+            : (tetherToman > 0 ? parseFloat((finalToman / tetherToman).toFixed(6)) : 0);
+
+          if (finalToman > 0 || finalUsd > 0) {
+            const coin: CoinInfo = {
+              name: it.name || sym,
+              symbol: sym,
+              usdt: finalUsd,
+              irr: finalToman,
+              dayChange: dayCh,
+              source: 'nobitex',
+              isDerived: rawUsdt === 0 && tetherToman > 0,
+            };
+            coins[sym.toLowerCase()] = coin;
+            coins[sym] = coin;
           }
         }
       }
+    }
 
-      // B) TGJU Object Format
-      const tgjuCurrent = goldRes.data?.current || goldRes.data?.data?.current;
-      if (tgjuCurrent?.geram18?.p && !goldIsLive) {
-        const p = Math.round(this.parseNumberFromRaw(tgjuCurrent.geram18.p) / 10);
-        if (this.isValidGoldPrice(p)) {
-          gold18Toman = p;
-          gold18Change = parseFloat(String(tgjuCurrent.geram18.dp || '0')) || 0;
-          gold18High = Math.round(p * 1.01);
-          gold18Low = Math.round(p * 0.99);
-          goldIsLive = true;
-          metadata.primaryProviders['gold18'] = 'tgju';
+    // --- Wallex symbols ---
+    const wallexSymbols =
+      primaryData?.result?.symbols || primaryData?.symbols ||
+      secondaryData?.result?.symbols || secondaryData?.symbols;
+    if (wallexSymbols && typeof wallexSymbols === 'object') {
+      for (const [key, rawItem] of Object.entries(wallexSymbols)) {
+        const it: any = rawItem;
+        const st = it?.stats;
+        if (!st?.lastPrice) continue;
+        const lastP = parseFloat(st.lastPrice);
+        if (!this.isValidCoinUsd(lastP) && lastP <= 0) continue;
+
+        const base = String(it.baseAsset || key.replace('TMN', '').replace('USDT', '')).toUpperCase();
+        if (!base || base === 'USDT') continue;
+
+        const quote = String(it.quoteAsset || (key.endsWith('TMN') ? 'TMN' : 'USDT'));
+        const ch = parseFloat(st['24h_ch'] || '0') || 0;
+        const highP = parseFloat(st['24h_highPrice'] || '0');
+        const lowP  = parseFloat(st['24h_lowPrice']  || '0');
+
+        const coinToman = quote === 'TMN'
+          ? Math.round(lastP)
+          : (tetherToman > 0 ? Math.round(lastP * tetherToman) : 0);
+        const coinUsd = quote === 'USDT'
+          ? lastP
+          : (tetherToman > 0 ? parseFloat((coinToman / tetherToman).toFixed(6)) : 0);
+
+        // Only overwrite if we don't already have a valid entry from primary
+        if (!coins[base.toLowerCase()] || coins[base.toLowerCase()].unavailable) {
+          const coin: CoinInfo = {
+            name: base,
+            symbol: base,
+            usdt: coinUsd,
+            irr: coinToman,
+            dayChange: ch,
+            dayHighToman: highP > 0 ? Math.round(highP) : undefined,
+            dayLowToman:  lowP  > 0 ? Math.round(lowP)  : undefined,
+            source: 'wallex',
+          };
+          coins[base.toLowerCase()] = coin;
+          coins[base] = coin;
         }
       }
+    }
 
-      if (goldIsLive) {
-        metadata.isLive = metadata.isLive && true;
-      }
-
-      // Build gold map (simplified for brevity)
-      const goldInfoMap: Record<string, GoldInfo> = {
-        gold18: {
-          title: 'طلای ۱۸ عیار / 750',
-          tomanPrice: gold18Toman,
-          highToman: gold18High,
-          lowToman: gold18Low,
-          dayChangePercent: gold18Change,
-          isStale: !goldIsLive,
-        },
-        gold24: {
-          title: 'طلای ۲۴ عیار',
-          tomanPrice: Math.round(gold18Toman * 1.33),
-          highToman: Math.round(gold18Toman * 1.33 * 1.01),
-          lowToman: Math.round(gold18Toman * 1.33 * 0.99),
-          dayChangePercent: gold18Change,
-        },
-      };
-
-      // ========================================
-      // 3. BUILD CRYPTO COINS DICTIONARY
-      // ========================================
-      const coins: Record<string, CoinInfo> = {};
-
-      // Unified Tether
-      const usdtCoin: CoinInfo = {
+    // Add tether itself
+    if (tetherToman > 0) {
+      const usdt: CoinInfo = {
         name: 'تتر دیجیتال',
         symbol: 'USDT',
         usdt: 1.0,
         irr: tetherToman,
-        dayChange: tetherChange,
-        dayHighToman: tetherHigh,
-        dayLowToman: tetherLow,
-        dayHighUsd: 1.0,
-        dayLowUsd: 1.0,
-        isStale: !tetherIsLive,
+        dayChange: 0,
+        source: 'nobitex',
       };
-      coins['usdt'] = usdtCoin;
-      coins['tether'] = usdtCoin;
+      coins['usdt'] = usdt;
+      coins['tether'] = usdt;
+      coins['USDT'] = usdt;
+    }
 
-      // Unified Dollar
-      const usdCoin: CoinInfo = {
-        name: 'دلار آمریکا',
-        symbol: 'USD',
-        usdt: 1.0,
-        irr: dollarToman,
-        dayChange: dollarChange,
-        dayHighToman: tetherHigh,
-        dayLowToman: tetherLow,
-        dayHighUsd: 1.0,
-        dayLowUsd: 1.0,
-      };
-      coins['usd'] = usdCoin;
-      coins['dollar'] = usdCoin;
-
-      // Ingest from Nobitex if available
-      if (nobitexData && typeof nobitexData === 'object') {
-        for (const [symKey, item] of Object.entries(nobitexData)) {
-          if (!item || typeof item !== 'object' || symKey === 'USDT') continue;
-
-          const rawIrr = parseInt(String((item as any).irr || '0'), 10);
-          const rawUsdt = parseFloat(String((item as any).usdt || '0'));
-          const dayCh = parseFloat(String((item as any).dayChange || '0')) || 0;
-
-          if (this.isValidCryptoPrice(rawUsdt, rawIrr, tetherToman)) {
-            const finalIrr = rawIrr > 0 ? rawIrr : Math.round(rawUsdt * tetherToman);
-            const finalUsdt = rawUsdt > 0 ? rawUsdt : finalIrr / tetherToman;
-
-            const sym = symKey.toUpperCase();
-            coins[symKey.toLowerCase()] = {
-              name: (item as any).name || sym,
-              symbol: sym,
-              usdt: finalUsdt,
-              irr: finalIrr,
-              dayChange: dayCh,
-              dayHighToman: Math.round(finalIrr * 1.015),
-              dayLowToman: Math.round(finalIrr * 0.985),
-            };
-          }
-        }
+    // Apply manual aliases (does NOT create new prices — only aliases to existing entries)
+    for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
+      const std = standard.toLowerCase();
+      if (coins[std]) {
+        coins[alias.toLowerCase()] = coins[std];
       }
+    }
 
-      // Ensure essential cryptos always present
-      const essentialCryptos = [
-        { key: 'btc', name: 'بیت کوین', sym: 'BTC', defaultUsd: 82569 },
-        { key: 'eth', name: 'اتریوم', sym: 'ETH', defaultUsd: 2850 },
-        { key: 'ton', name: 'تون کوین', sym: 'TON', defaultUsd: 1.6 },
-      ];
+    return coins;
+  }
 
-      for (const ec of essentialCryptos) {
-        if (!coins[ec.key]) {
-          coins[ec.key] = {
-            name: ec.name,
-            symbol: ec.sym,
-            usdt: ec.defaultUsd,
-            irr: Math.round(ec.defaultUsd * tetherToman),
-            dayChange: 0.0,
-            dayHighToman: Math.round(ec.defaultUsd * tetherToman * 1.015),
-            dayLowToman: Math.round(ec.defaultUsd * tetherToman * 0.985),
-            isStale: true, // Mark as stale since using defaults
+  private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
+    // Base USD entry
+    const usd: AssetInfo = {
+      key: 'usd', name: 'US Dollar (دلار آمریکا)', symbol: 'USD', category: 'fiat',
+      priceToman: dollarToman || undefined,
+      priceUsd: 1.0,
+      dayChange: 0,
+      unavailable: !dollarLive,
+    };
+
+    // Cross rates vs USD (approximate static ratios — clearly marked as derived)
+    const crosses: Array<[string, string, number]> = [
+      ['eur', 'Euro (یورو)',       1.08],
+      ['gbp', 'British Pound (پوند)', 1.27],
+      ['aed', 'UAE Dirham (درهم)', 0.272],
+      ['try', 'Turkish Lira (لیر)', 0.029],
+      ['cny', 'Chinese Yuan (یوان)', 0.138],
+      ['cad', 'Canadian Dollar',   0.73],
+      ['aud', 'Australian Dollar', 0.66],
+      ['chf', 'Swiss Franc',       1.12],
+    ];
+
+    const out: Record<string, AssetInfo> = { usd };
+    for (const [key, name, ratio] of crosses) {
+      out[key] = {
+        key, name, symbol: key.toUpperCase(), category: 'fiat',
+        priceUsd: ratio,
+        priceToman: dollarToman > 0 ? Math.round(ratio * dollarToman) : undefined,
+        dayChange: 0,
+        isDerived: true,     // <-- clearly marked
+        unavailable: !dollarLive,
+      };
+    }
+    return out;
+  }
+
+  private static extractOil(goldData: any): Record<string, AssetInfo> {
+    // TGJU exposes brent as "oil_brent" or "brent" in the current object
+    const current = goldData?.current || goldData?.data?.current;
+    const out: Record<string, AssetInfo> = {};
+
+    const makeOil = (key: string, name: string, symbol: string, fieldKey: string): AssetInfo => {
+      const f = current?.[fieldKey];
+      if (f?.p) {
+        const usd = this.parseNumberFromRaw(f.p);          // TGJU stores oil in USD
+        const ch  = parseFloat(String(f.dp || f.d || '0')) || 0;
+        if (usd > 0) {
+          return {
+            key, name, symbol, category: 'oil',
+            priceUsd: usd,
+            priceToman: undefined,  // toman value depends on the dollar rate; caller can compute
+            dayChange: ch,
+            unit: 'per barrel',
+            source: undefined,
           };
         }
       }
+      return { key, name, symbol, category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel' };
+    };
 
-      // Apply manual aliases
-      for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
-        const stdLower = standard.toLowerCase();
-        if (coins[stdLower]) {
-          coins[alias.toLowerCase()] = coins[stdLower];
-        }
-      }
-
-      // ========================================
-      // 4. OIL & FIAT (simplified, no real-time for now)
-      // ========================================
-      const oilMap: Record<string, AssetInfo> = {
-        brent: {
-          key: 'oil_brent',
-          name: 'Brent Crude Oil',
-          symbol: 'BRENT',
-          category: 'oil',
-          priceUsd: 101.08,
-          priceToman: Math.round(101.08 * tetherToman),
-          dayChange: 0.08,
-          isStale: true, // No real-time oil API configured
-        },
-      };
-
-      const fiatMap: Record<string, AssetInfo> = {
-        usd: {
-          key: 'usd',
-          name: 'US Dollar',
-          symbol: 'USD',
-          category: 'fiat',
-          priceToman: dollarToman,
-          priceUsd: 1.0,
-          dayChange: dollarChange,
-        },
-      };
-
-      // ========================================
-      // 5. BUILD FINAL SNAPSHOT
-      // ========================================
-      const nowIso = new Date().toISOString();
-      const irTimeStr = new Intl.DateTimeFormat('fa-IR', {
-        timeZone: 'Asia/Tehran',
-        hour: '2-digit',
-        minute: '2-digit',
-        second: '2-digit',
-      }).format(new Date());
-
-      // Identify unavailable assets
-      if (!tetherIsLive) metadata.unavailableAssets.push('usdt');
-      if (!goldIsLive) metadata.unavailableAssets.push('gold18');
-
-      metadata.errors = errorLog;
-
-      const snapshot: UnifiedMarketSnapshot = {
-        timestamp: now,
-        serverTime: nowIso,
-        persianTime: irTimeStr,
-        metadata,
-        tether: {
-          toman: tetherToman,
-          usd: 1.0,
-          dayChange: tetherChange,
-          highToman: tetherHigh,
-          lowToman: tetherLow,
-          source: tetherSource,
-        },
-        dollar: {
-          toman: dollarToman,
-          usd: 1.0,
-          dayChange: dollarChange,
-          highToman: tetherHigh,
-          lowToman: tetherLow,
-        },
-        gold: goldInfoMap,
-        oil: oilMap,
-        coins,
-        fiat: fiatMap,
-      };
-
-      this.unifiedSnapshot = snapshot;
-      this.lastSnapshotTime = now;
-      return snapshot;
-    } catch (err: any) {
-      errorLog.push(`Critical error: ${err.message}`);
-      metadata.errors = errorLog;
-
-      // Return stale cached snapshot if available
-      if (this.unifiedSnapshot) {
-        this.unifiedSnapshot.metadata = metadata;
-        this.unifiedSnapshot.metadata.isStale = true;
-        return this.unifiedSnapshot;
-      }
-
-      // Return bare minimum snapshot
-      const tetherFallback = UNIFIED_DEFAULT_MARKET.tetherToman;
-      return {
-        timestamp: now,
-        serverTime: new Date().toISOString(),
-        persianTime: 'نامشخص',
-        metadata,
-        tether: { toman: tetherFallback, usd: 1.0, dayChange: 0, highToman: tetherFallback, lowToman: tetherFallback, source: 'Fallback Only' },
-        dollar: { toman: tetherFallback, usd: 1.0, dayChange: 0, highToman: tetherFallback, lowToman: tetherFallback },
-        gold: {},
-        oil: {},
-        coins: {},
-        fiat: {},
-      };
-    }
+    out['brent'] = makeOil('oil_brent', 'Brent Crude Oil (نفت برنت)', 'BRENT', 'oil_brent');
+    out['wti']   = makeOil('oil_wti',   'WTI Crude Oil (نفت وست تگزاس)', 'WTI', 'oil_wti');
+    out['gas']   = makeOil('gas',       'Natural Gas (گاز طبیعی)', 'GAS', 'gas');
+    return out;
   }
 
-  /**
-   * PHASE 6: Real-time asset lookup
-   */
+  // ==========================================================================
+  // PUBLIC: individual lookups
+  // ==========================================================================
+
+  static async getOilPrice(type: 'brent' | 'wti' | 'gas' = 'brent'): Promise<AssetInfo> {
+    const snap = await this.getUnifiedMarketSnapshot();
+    const key = (type || 'brent').toLowerCase();
+    return snap.oil[key] || { key: `oil_${key}`, name: key, symbol: key.toUpperCase(), category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel' };
+  }
+
+  static async getGoldPrice(): Promise<GoldInfo | null> {
+    const snap = await this.getUnifiedMarketSnapshot();
+    return snap.gold.gold18 || null;
+  }
+
+  static async getGoldOrCoinItem(query: string): Promise<GoldInfo> {
+    const q = this.faNumToEn(query.trim().toLowerCase());
+    const snap = await this.getUnifiedMarketSnapshot();
+    const g = snap.gold;
+
+    if (q.includes('امامی') || q.includes('emami') || q === 'seke' || q === 'سکه' || q.includes('طرح جدید')) return g.sekeEmami;
+    if (q.includes('بهار') || q.includes('bahar') || q.includes('تمام') || q.includes('طرح قدیم')) return g.sekeBahar;
+    if (q.includes('نیم') || q.includes('nim')) return g.sekeNim;
+    if (q.includes('ربع') || q.includes('rob')) return g.sekeRob;
+    if (q.includes('گرمی') || q.includes('gerami')) return g.sekeGerami;
+    if (q.includes('۲۴') || q.includes('24')) return g.gold24;
+    if (q.includes('مظنه') || q.includes('مثقال') || q.includes('آبشده') || q.includes('mesghal')) return g.mesghal;
+    if (q.includes('انس') || q.includes('ons') || q.includes('xau')) return g.ons;
+    if (q.includes('نقره') || q.includes('silver') || q.includes('xag')) return g.silver;
+    return g.gold18;
+  }
+
+  static async getCoinData(): Promise<Record<string, CoinInfo>> {
+    const snap = await this.getUnifiedMarketSnapshot();
+    return snap.coins;
+  }
+
   static async resolveAnyAsset(rawQuery: string): Promise<AssetInfo | null> {
     const parsed = this.parseNaturalQuery(rawQuery);
     const clean = parsed.cleanKey || this.faNumToEn(rawQuery.trim().toLowerCase());
     const aliasKey = MANUAL_ALIASES[clean] || clean;
     const amount = parsed.amount > 0 ? parsed.amount : 1;
+    const snap = await this.getUnifiedMarketSnapshot();
 
-    const snapshot = await this.getUnifiedMarketSnapshot();
-    const coins = snapshot.coins;
-    const dollarToman = snapshot.dollar.toman;
-    const tetherToman = snapshot.tether.toman;
+    // Oil
+    if (aliasKey.startsWith('oil') || clean.includes('نفت') || clean.includes('گاز')) {
+      const type: 'brent' | 'wti' | 'gas' =
+        aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti'
+        : clean.includes('گاز') ? 'gas'
+        : 'brent';
+      const oil = await this.getOilPrice(type);
+      if (oil.unavailable) return { ...oil, unavailable: true };
+      return {
+        ...oil,
+        name: amount > 1 ? `${amount} ${oil.name}` : oil.name,
+        priceUsd: oil.priceUsd ? oil.priceUsd * amount : undefined,
+        priceToman: oil.priceToman ? Math.round(oil.priceToman * amount) : undefined,
+      };
+    }
 
-    // Try coins first
-    const coin = coins[aliasKey] || coins[clean];
+    // Gold / Silver / Coins
+    if (
+      aliasKey.startsWith('gold') || aliasKey.startsWith('silver') || aliasKey.startsWith('seke') ||
+      aliasKey.startsWith('mesghal') || aliasKey.startsWith('ons') ||
+      clean.includes('طلا') || clean.includes('سکه') || clean.includes('نقره') ||
+      clean.includes('مثقال') || clean.includes('مظنه') || clean.includes('انس')
+    ) {
+      const item = await this.getGoldOrCoinItem(clean);
+      if (item.unavailable) {
+        return {
+          key: aliasKey, name: item.title, symbol: aliasKey.toUpperCase(),
+          category: 'gold', dayChange: 0, unavailable: true,
+        };
+      }
+      const usdt = snap.tether.toman || 1;
+      return {
+        key: aliasKey, name: amount > 1 ? `${amount} ${item.title}` : item.title,
+        symbol: aliasKey.toUpperCase(), category: 'gold',
+        priceToman: Math.round(item.tomanPrice * amount),
+        priceUsd: parseFloat(((item.tomanPrice * amount) / usdt).toFixed(2)),
+        dayChange: item.dayChangePercent,
+        highToman: item.highToman ? Math.round(item.highToman * amount) : undefined,
+        lowToman: item.lowToman ? Math.round(item.lowToman * amount) : undefined,
+      };
+    }
+
+    // Fiat
+    const fiatKey = (aliasKey || '').toLowerCase();
+    if (snap.fiat[fiatKey] || snap.fiat[clean]) {
+      const f = snap.fiat[fiatKey] || snap.fiat[clean];
+      if (f.unavailable) return { ...f, unavailable: true };
+      return {
+        ...f,
+        name: amount > 1 ? `${amount} ${f.name}` : f.name,
+        priceToman: f.priceToman ? Math.round(f.priceToman * amount) : undefined,
+        priceUsd: f.priceUsd ? parseFloat((f.priceUsd * amount).toFixed(6)) : undefined,
+      };
+    }
+
+    // Crypto
+    const coins = snap.coins;
+    const coin = coins[aliasKey] || coins[clean] || coins[fiatKey];
     if (coin) {
+      if (coin.unavailable) {
+        return {
+          key: aliasKey, name: coin.name || aliasKey.toUpperCase(), symbol: (coin.symbol || aliasKey).toUpperCase(),
+          category: 'crypto', dayChange: 0, unavailable: true,
+        };
+      }
       return {
         key: aliasKey,
-        name: amount > 1 ? `${amount} ${coin.name}` : coin.name || '',
+        name: amount > 1 ? `${amount} ${coin.name || aliasKey.toUpperCase()}` : (coin.name || aliasKey.toUpperCase()),
         symbol: (coin.symbol || aliasKey).toUpperCase(),
         category: 'crypto',
         priceUsd: coin.usdt ? coin.usdt * amount : undefined,
         priceToman: coin.irr ? coin.irr * amount : undefined,
         dayChange: coin.dayChange,
-        isStale: coin.isStale,
+        highToman: coin.dayHighToman ? coin.dayHighToman * amount : undefined,
+        lowToman: coin.dayLowToman ? coin.dayLowToman * amount : undefined,
+        highUsd: coin.dayHighUsd ? coin.dayHighUsd * amount : undefined,
+        lowUsd: coin.dayLowUsd ? coin.dayLowUsd * amount : undefined,
       };
     }
 
     return null;
   }
 
-  /**
-   * PHASE 6: Market overview for dashboard
-   */
   static async getMarketOverviewAssets(): Promise<AssetInfo[]> {
-    const snapshot = await this.getUnifiedMarketSnapshot();
-    const coins = snapshot.coins;
+    const snap = await this.getUnifiedMarketSnapshot();
+    const coins = snap.coins;
+
+    const pick = (key: string, name: string, symbol: string): AssetInfo => {
+      const c = coins[key] || coins[symbol.toUpperCase()];
+      if (!c || c.unavailable) {
+        return { key, name, symbol, category: 'crypto', dayChange: 0, unavailable: true };
+      }
+      return {
+        key, name, symbol, category: 'crypto',
+        priceUsd: c.usdt,
+        priceToman: c.irr,
+        dayChange: c.dayChange,
+      };
+    };
 
     return [
-      { key: 'btc', name: 'Bitcoin', symbol: 'BTC', category: 'crypto', priceUsd: coins['btc']?.usdt || 85500, priceToman: coins['btc']?.irr || 0, dayChange: coins['btc']?.dayChange || 0 },
-      { key: 'eth', name: 'Ethereum', symbol: 'ETH', category: 'crypto', priceUsd: coins['eth']?.usdt || 2700, priceToman: coins['eth']?.irr || 0, dayChange: coins['eth']?.dayChange || 0 },
-      { key: 'usdt', name: 'Tether', symbol: 'USDT', category: 'crypto', priceUsd: 1.0, priceToman: snapshot.tether.toman, dayChange: snapshot.tether.dayChange },
+      pick('btc', 'Bitcoin',   'BTC'),
+      pick('eth', 'Ethereum',  'ETH'),
+      pick('sol', 'Solana',    'SOL'),
+      pick('ton', 'Toncoin',   'TON'),
+      pick('ltc', 'Litecoin',  'LTC'),
+      pick('doge', 'Dogecoin', 'DOGE'),
+      pick('xrp', 'XRP',       'XRP'),
+      pick('bnb', 'BNB',       'BNB'),
+      pick('trx', 'Tron',      'TRX'),
     ];
   }
 
-  /**
-   * PHASE 6: 7-day chart (using live data if possible)
-   */
-  static async get7DayChartData(symbol: string, currentPrice: number, dayChange: number = 0): Promise<Chart7DayData> {
+  // ==========================================================================
+  // CHARTS
+  // ==========================================================================
+
+  static async get7DayChartData(
+    symbol: string,
+    currentPrice: number,
+    dayChange: number = 0,
+    category?: string
+  ): Promise<Chart7DayData> {
     const cleanSym = (symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
-    const base = currentPrice && currentPrice > 0 ? currentPrice : 100;
-    const count = 42;
-    const pts: number[] = [];
 
-    const weekFactor = dayChange !== 0 ? dayChange * 2.3 : 1.15;
-    const start = base / (1 + weekFactor / 100);
-    const seed = (cleanSym.charCodeAt(0) || 7) + (cleanSym.charCodeAt(cleanSym.length - 1) || 13);
+    // --- 1. Real Binance klines for crypto (2h candles × 84 = 7 days) --------
+    const isCrypto = !(
+      cleanSym.startsWith('GOLD') || cleanSym.startsWith('SEKE') || cleanSym.startsWith('SILVER') ||
+      cleanSym.startsWith('OIL') || cleanSym.startsWith('BRENT') || cleanSym.startsWith('WTI') ||
+      cleanSym === 'USD' || cleanSym === 'EUR' || cleanSym === 'GBP' ||
+      cleanSym === 'AED' || cleanSym === 'TRY' || cleanSym === 'CNY' ||
+      cleanSym === 'ONS' || cleanSym === 'XAU'
+    );
 
-    for (let i = 0; i < count; i++) {
-      const progress = i / (count - 1);
-      const linearTrend = start + (base - start) * progress;
-      const wave1 = Math.sin(progress * Math.PI * 3 + seed) * (base * 0.014);
-      const wave2 = Math.cos(progress * Math.PI * 5 + seed * 2) * (base * 0.007);
-      const val = Math.max(base * 0.5, linearTrend + wave1 + wave2);
-      pts.push(Number(val.toFixed(2)));
+    if (isCrypto && cleanSym) {
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
+      try {
+        const res = await fetch(
+          `https://api.binance.com/api/v3/klines?symbol=${cleanSym}USDT&interval=2h&limit=84`,
+          { signal: controller.signal }
+        );
+        clearTimeout(timer);
+        if (res.ok) {
+          const data = await res.json();
+          if (Array.isArray(data) && data.length >= 20) {
+            const points = data.map((c: any) => parseFloat(c[4]));
+            if (points.every((p) => this.isValidNumber(p) && p > 0)) {
+              const high = Math.max(...points);
+              const low  = Math.min(...points);
+              const start = points[0];
+              const current = points[points.length - 1];
+              return {
+                points, high, low,
+                weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
+                startPrice: start,
+                currentPrice: current,
+                source: 'binance',
+                isSynthetic: false,
+              };
+            }
+          }
+        } else {
+          console.warn(`[PriceService] binance klines for ${cleanSym} returned HTTP ${res.status}`);
+        }
+      } catch (e: any) {
+        console.warn(`[PriceService] binance klines for ${cleanSym} failed: ${e?.message || e}`);
+      } finally {
+        clearTimeout(timer);
+      }
     }
-    pts[pts.length - 1] = base;
 
-    const high = Math.max(...pts);
-    const low = Math.min(...pts);
-    const weekChangePercent = start > 0 ? ((base - start) / start) * 100 : dayChange;
-
-    return { points: pts, high, low, weekChangePercent, startPrice: start, currentPrice: base };
+    // --- 2. No real source for this asset -----------------------------------
+    // We do NOT invent a series. We return an explicit unavailable marker.
+    return {
+      points: [],
+      high: 0,
+      low: 0,
+      weekChangePercent: dayChange,
+      startPrice: 0,
+      currentPrice: currentPrice || 0,
+      source: 'unavailable',
+      isSynthetic: false,
+    };
   }
 
-  /**
-   * PHASE 6: Mini app data
-   */
+  // ==========================================================================
+  // MINI APP DATA
+  // ==========================================================================
+
   static async getMiniAppData(): Promise<{
     highlights: any[];
     crypto: any[];
@@ -849,17 +1119,284 @@ export class PriceService {
     serverTime: string;
   }> {
     try {
-      const snapshot = await this.getUnifiedMarketSnapshot();
-      return {
-        highlights: Object.values(snapshot.coins).slice(0, 6),
-        crypto: Object.values(snapshot.coins),
-        gold: Object.values(snapshot.gold),
-        fiat: Object.values(snapshot.fiat),
-        oil: Object.values(snapshot.oil),
-        serverTime: snapshot.serverTime,
+      const snap = await this.getUnifiedMarketSnapshot();
+      const dollarToman = snap.dollar.toman;
+      const tetherToman = snap.tether.toman;
+      const coins = snap.coins;
+
+      const makeItem = (
+        key: string, symbol: string, name: string, persianName: string,
+        category: 'crypto' | 'gold' | 'fiat' | 'oil',
+        priceToman: number, priceUsd: number | undefined, dayChange: number,
+        highToman?: number, lowToman?: number
+      ) => {
+        const safeToman = priceToman > 0 ? priceToman : 0;
+        const safeUsd = priceUsd && priceUsd > 0 ? priceUsd : undefined;
+        const sparkline = this.generateSparklinePoints(safeToman || (safeUsd ? safeUsd * dollarToman : 1), dayChange, 24);
+        const hourlyTrend = sparkline.map((price, idx) => {
+          const hoursAgo = 23 - idx;
+          return {
+            time: hoursAgo === 0 ? 'اکنون' : `${hoursAgo} ساعت پیش`,
+            hour: `${idx}:00`,
+            price: Math.round(price),
+          };
+        });
+        return {
+          key, symbol, name, persianName, category,
+          priceToman: Math.round(safeToman),
+          priceUsd: safeUsd !== undefined
+            ? parseFloat(safeUsd.toFixed(safeUsd < 1 ? 4 : 2))
+            : undefined,
+          dayChange: parseFloat((dayChange || 0).toFixed(2)),
+          highToman: highToman ? Math.round(highToman) : undefined,
+          lowToman: lowToman ? Math.round(lowToman) : undefined,
+          sparkline,
+          hourlyTrend,
+        };
       };
-    } catch {
+
+      // Highlights
+      const btc = coins['btc'];
+      const ton = coins['ton'];
+      const highlights = [
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
+        makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', tetherToman, 1.0, snap.tether.dayChange, snap.tether.highToman, snap.tether.lowToman),
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman),
+        btc && !btc.unavailable
+          ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman)
+          : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0),
+        ton && !ton.unavailable
+          ? makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', ton.irr, ton.usdt, ton.dayChange, ton.dayHighToman, ton.dayLowToman)
+          : makeItem('ton', 'TON', 'Toncoin', 'تون کوین', 'crypto', 0, undefined, 0),
+      ];
+
+      const cryptoKeys: Array<{ key: string; name: string; fa: string }> = [
+        { key: 'btc', name: 'Bitcoin', fa: 'بیت کوین' },
+        { key: 'eth', name: 'Ethereum', fa: 'اتریوم' },
+        { key: 'usdt', name: 'Tether', fa: 'تتر دیجیتال' },
+        { key: 'ton', name: 'Toncoin', fa: 'تون کوین' },
+        { key: 'sol', name: 'Solana', fa: 'سولانا' },
+        { key: 'bnb', name: 'BNB', fa: 'بایننس کوین' },
+        { key: 'trx', name: 'Tron', fa: 'ترون' },
+        { key: 'doge', name: 'Dogecoin', fa: 'دوج کوین' },
+        { key: 'xrp', name: 'Ripple', fa: 'ریپل' },
+        { key: 'ada', name: 'Cardano', fa: 'کاردانو' },
+        { key: 'shib', name: 'Shiba Inu', fa: 'شیبا اینو' },
+        { key: 'pepe', name: 'Pepe', fa: 'پپه' },
+        { key: 'not', name: 'Notcoin', fa: 'نات کوین' },
+        { key: 'ltc', name: 'Litecoin', fa: 'لایت کوین' },
+        { key: 'bch', name: 'Bitcoin Cash', fa: 'بیت کوین کش' },
+        { key: 'avax', name: 'Avalanche', fa: 'اولنچ' },
+        { key: 'link', name: 'Chainlink', fa: 'چین لینک' },
+        { key: 'sui', name: 'Sui', fa: 'سویی' },
+        { key: 'near', name: 'Near Protocol', fa: 'نیر پروتکل' },
+      ];
+
+      const crypto = cryptoKeys.map((c) => {
+        const coin = coins[c.key];
+        if (!coin || coin.unavailable) {
+          return makeItem(c.key, c.key.toUpperCase(), c.name, c.fa, 'crypto', 0, undefined, 0);
+        }
+        return makeItem(
+          c.key, c.key.toUpperCase(), c.name, c.fa, 'crypto',
+          c.key === 'usdt' ? tetherToman : coin.irr,
+          coin.usdt,
+          coin.dayChange,
+          coin.dayHighToman,
+          coin.dayLowToman
+        );
+      });
+
+      const gold = [
+        makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار / 750', 'gold', snap.gold.gold18.tomanPrice, snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18.dayChangePercent, snap.gold.gold18.highToman, snap.gold.gold18.lowToman),
+        makeItem('gold24', 'GOLD24', 'Gold 24k', 'طلای ۲۴ عیار', 'gold', snap.gold.gold24.tomanPrice, snap.gold.gold24.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold24.tomanPrice / tetherToman : undefined, snap.gold.gold24.dayChangePercent),
+        makeItem('mesghal', 'MESGHAL', 'Mesghal Gold', 'مظنه مثقال طلا (آبشده)', 'gold', snap.gold.mesghal.tomanPrice, snap.gold.mesghal.tomanPrice > 0 && tetherToman > 0 ? snap.gold.mesghal.tomanPrice / tetherToman : undefined, snap.gold.mesghal.dayChangePercent, snap.gold.mesghal.highToman, snap.gold.mesghal.lowToman),
+        makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی (طرح جدید)', 'gold', snap.gold.sekeEmami.tomanPrice, snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami.dayChangePercent, snap.gold.sekeEmami.highToman, snap.gold.sekeEmami.lowToman),
+        makeItem('seke_bahar', 'BAHAR', 'Seke Bahar Azadi', 'سکه بهار آزادی (طرح قدیم)', 'gold', snap.gold.sekeBahar.tomanPrice, snap.gold.sekeBahar.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeBahar.tomanPrice / tetherToman : undefined, snap.gold.sekeBahar.dayChangePercent, snap.gold.sekeBahar.highToman, snap.gold.sekeBahar.lowToman),
+        makeItem('seke_nim', 'NIM', 'Half Coin', 'نیم سکه بهار آزادی', 'gold', snap.gold.sekeNim.tomanPrice, snap.gold.sekeNim.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeNim.tomanPrice / tetherToman : undefined, snap.gold.sekeNim.dayChangePercent, snap.gold.sekeNim.highToman, snap.gold.sekeNim.lowToman),
+        makeItem('seke_rob', 'ROB', 'Quarter Coin', 'ربع سکه بهار آزادی', 'gold', snap.gold.sekeRob.tomanPrice, snap.gold.sekeRob.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeRob.tomanPrice / tetherToman : undefined, snap.gold.sekeRob.dayChangePercent, snap.gold.sekeRob.highToman, snap.gold.sekeRob.lowToman),
+        makeItem('seke_gerami', 'GERAMI', 'Gerami Coin', 'سکه گرمی', 'gold', snap.gold.sekeGerami.tomanPrice, snap.gold.sekeGerami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeGerami.tomanPrice / tetherToman : undefined, snap.gold.sekeGerami.dayChangePercent, snap.gold.sekeGerami.highToman, snap.gold.sekeGerami.lowToman),
+        makeItem('ons', 'XAU', 'Gold Ounce', 'انس جهانی طلا', 'gold', snap.gold.ons.tomanPrice, snap.gold.ons.tomanPrice > 0 && tetherToman > 0 ? snap.gold.ons.tomanPrice / tetherToman : undefined, snap.gold.ons.dayChangePercent),
+        makeItem('silver', 'XAG', 'Silver 999', 'یک گرم نقره ۹۹۹', 'gold', snap.gold.silver.tomanPrice, snap.gold.silver.tomanPrice > 0 && tetherToman > 0 ? snap.gold.silver.tomanPrice / tetherToman : undefined, snap.gold.silver.dayChangePercent),
+      ];
+
+      const fiat = [
+        makeItem('usd', 'USD', 'US Dollar', 'دلار آمریکا', 'fiat', dollarToman, 1.0, snap.dollar.dayChange, snap.dollar.highToman, snap.dollar.lowToman),
+        ...Object.values(snap.fiat).filter((f) => f.key !== 'usd').map((f) =>
+          makeItem(f.key, f.symbol, f.name, f.name, 'fiat', f.priceToman || 0, f.priceUsd, f.dayChange)
+        ),
+      ];
+
+      const oil = [
+        makeItem('brent', 'BRENT', 'Brent Crude Oil', 'نفت خام برنت', 'oil', snap.oil.brent?.priceToman || 0, snap.oil.brent?.priceUsd, snap.oil.brent?.dayChange || 0),
+        makeItem('wti',   'WTI',   'WTI Crude Oil',   'نفت وست تگزاس',   'oil', snap.oil.wti?.priceToman || 0,   snap.oil.wti?.priceUsd,   snap.oil.wti?.dayChange || 0),
+        makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0),
+      ];
+
+      return {
+        highlights, crypto, gold, fiat, oil,
+        serverTime: snap.serverTime,
+      };
+    } catch (e: any) {
+      console.error('[PriceService] getMiniAppData failed:', e?.message || e);
       return { highlights: [], crypto: [], gold: [], fiat: [], oil: [], serverTime: new Date().toISOString() };
     }
+  }
+
+  // ==========================================================================
+  // SPARKLINE HELPER
+  // ==========================================================================
+
+  static generateSparklinePoints(basePrice: number, changePercent: number, length: number = 24): number[] {
+    if (!this.isValidNumber(basePrice) || basePrice <= 0) return [];
+    const points: number[] = [];
+    const trend = (changePercent || 0) / 100;
+    const startPrice = basePrice / (1 + trend);
+    const range = Math.abs(basePrice - startPrice) || basePrice * 0.02;
+
+    for (let i = 0; i < length; i++) {
+      const progress = i / (length - 1);
+      const linear = startPrice + (basePrice - startPrice) * progress;
+      const noise = (Math.sin(i * 0.75) * 0.35 + Math.cos(i * 1.35) * 0.25) * range * 0.45;
+      const val = i === length - 1 ? basePrice : Math.max(0, linear + noise);
+      points.push(parseFloat(val.toFixed(2)));
+    }
+    return points;
+  }
+
+  // ==========================================================================
+  // PARSING HELPERS
+  // ==========================================================================
+
+  static parseNaturalQuery(raw: string): {
+    cleanKey: string;
+    amount: number;
+    isQuestion: boolean;
+    isOverviewRequest: boolean;
+    isMiniAppRequest: boolean;
+    isGreetingOrHelp: boolean;
+  } {
+    if (!raw) {
+      return { cleanKey: '', amount: 1, isQuestion: false, isOverviewRequest: false, isMiniAppRequest: false, isGreetingOrHelp: false };
+    }
+
+    let text = this.faNumToEn(raw.trim().toLowerCase());
+    text = text.replace(/@[a-z0-9_]+/gi, '').trim();
+
+    const isGreetingOnly = /^(?:سلام|درود|وقت\s+بخیر|صبح\s+بخیر|عصر\s+بخیر|خسته\s+نباشید)$/i.test(text.replace(/[؟!?.؛:،,]+/g, '').trim());
+    const isHelpOnly = /^(?:راهنما|کمک|دستورات|help)$/i.test(text.replace(/[؟!?.؛:،,]+/g, '').trim());
+
+    text = text.replace(/[\u066b]/g, '.');
+    text = text.replace(/[\u200c\u200b\u00a0]+/g, ' ');
+    text = text.replace(/[؟?!؛:،,]+/g, ' ').replace(/[.!?]+$/g, '').trim();
+
+    if (text.startsWith('/')) text = text.substring(1).trim();
+    text = text.replace(/^(?:p|c|arz|qeymat|price)\s+/gi, '').trim();
+
+    const overviewKeywords = ['بازار', 'ارزها', 'ارز', 'لیست', 'کریپتو', 'مارکت', 'market', 'گزارش', 'تابلو', 'قیمت‌ها', 'قیمتها'];
+    const isOverview = overviewKeywords.some((k) => text === k || text === `گزارش ${k}`);
+
+    const isMiniApp = /^(?:مینی\s*اپ|مینی‌اپ|miniapp|mini\s*app|اپ|اپلیکیشن|برنامه)$/i.test(text);
+
+    const starterRegex = /^(?:سلام\s+علیکم|سلام|درود|وقت\s+بخیر|صبح\s+بخیر|عصر\s+بخیر|داداش|عزیز|لطفا|لطفاً|بگو|میشه)\s+/gi;
+    let loopGuard = 0;
+    while (starterRegex.test(text) && loopGuard++ < 5) {
+      text = text.replace(starterRegex, '').trim();
+    }
+
+    text = text.replace(/^(?:قیمت\s+لحظه\s*ای|قیمت\s+لحظه‌ای|قیمت|نرخ|استعلام|ارزش)\s+/gi, '').trim();
+    text = text.replace(/\s+(?:چند\s+تومن|چند\s+تومان|چند\s+دلار|چقدر|چنده|چند\s+است|چند\s+شده|هست)$/gi, '').trim();
+    text = text.replace(/^(?:الان|امروز)\s+/gi, '').trim();
+    text = text.replace(/\s+(?:الان|امروز|رو|را|در\s+بازار|بازار\s+آزاد)$/gi, '').trim();
+
+    let amount = 1;
+    const numMatch = text.match(/^(\d+(?:\.\d+)?)\s*(?:تا|عدد|گرم|گرمی|مثقال|واحد|دانه)?\s*(.+)$/);
+    if (numMatch && !text.includes('نیم') && !text.includes('ربع')) {
+      amount = parseFloat(numMatch[1]) || 1;
+      text = numMatch[2].trim();
+    } else {
+      const endMatch = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/);
+      if (endMatch) {
+        amount = parseFloat(endMatch[2]) || 1;
+        text = endMatch[1].trim();
+      }
+    }
+
+    text = text.replace(/^(?:قیمت|نرخ)\s+/gi, '').trim();
+    text = text.replace(/\s+(?:گرمی|گرم)$/gi, '').trim();
+
+    return {
+      cleanKey: text,
+      amount: amount > 0 ? amount : 1,
+      isQuestion: raw.includes('؟') || raw.includes('?') || raw.includes('چند') || raw.includes('چقدر'),
+      isOverviewRequest: isOverview,
+      isMiniAppRequest: isMiniApp,
+      isGreetingOrHelp: isGreetingOnly || isHelpOnly,
+    };
+  }
+
+  static faNumToEn(text: string): string {
+    if (!text) return '';
+    const fa = ['۰', '۱', '۲', '۳', '۴', '۵', '۶', '۷', '۸', '۹'];
+    const ar = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    const en = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    let result = String(text);
+    for (let i = 0; i < 10; i++) {
+      result = result.replaceAll(fa[i], en[i]);
+      result = result.replaceAll(ar[i], en[i]);
+    }
+    return result;
+  }
+
+  static formatNumber(number: number, decimals = 2): string {
+    if (!this.isValidNumber(number)) return '0';
+    return number.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: decimals });
+  }
+
+  static parseNumberFromRaw(raw: any): number {
+    if (raw === undefined || raw === null) return 0;
+    const val = typeof raw === 'object' ? raw.p : raw;
+    if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
+    const parsed = parseFloat(String(val || '0').replace(/,/g, '').trim());
+    return Number.isFinite(parsed) ? parsed : 0;
+  }
+}
+
+// ============================================================================
+// INTERNAL HELPER CLASS (only used inside this module)
+// ============================================================================
+
+class GoldExtract {
+  constructor(
+    public title: string,
+    private _tomanPrice: number,
+    private _high: number,
+    private _low: number,
+    private _change: number,
+    public isLive: boolean,
+    public source: string
+  ) {}
+
+  set(toman: number, high: number, low: number, change: number, isLive: boolean, source: string): void {
+    this._tomanPrice = toman;
+    this._high = high;
+    this._low = low;
+    this._change = change;
+    this.isLive = isLive;
+    this.source = source;
+  }
+
+  toGoldInfo(): GoldInfo {
+    return {
+      title: this.title,
+      tomanPrice: this._tomanPrice,
+      highToman: this._high || this._tomanPrice,
+      lowToman: this._low || this._tomanPrice,
+      dayChangePercent: this._change,
+      unavailable: !this.isLive,
+      isStale: !this.isLive,
+      source: this.source,
+    };
   }
 }
