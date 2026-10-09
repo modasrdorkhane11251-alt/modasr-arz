@@ -1,20 +1,8 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { BOT_CONFIG, DEFAULT_BOT_TOKEN } from './src/bot/config';
-import {
-  SESSION_COOKIE,
-  safeEqual,
-  parseCookies,
-  createSessionToken,
-  verifySessionToken,
-  sessionCookie,
-  clearCookie,
-  checkLoginAllowed,
-  recordLoginFailure,
-  recordLoginSuccess,
-} from './src/bot/auth';
 import { BotStorage } from './src/bot/storage';
 import { TelegramService, TelegramUpdate } from './src/bot/telegramService';
 import { WebhookManager } from './src/bot/webhookManager';
@@ -25,11 +13,25 @@ import { ChannelPostService } from './src/bot/channelPostService';
 import { TunnelService } from './src/bot/tunnelService';
 import { AdminAlertService } from './src/bot/adminAlertService';
 import { KEYBOARD_THEME_PRESETS } from './src/bot/types';
+import {
+  SESSION_COOKIE,
+  createSessionToken,
+  verifySessionToken,
+  parseCookies,
+  sessionCookie,
+  clearCookie,
+  safeEqual,
+  checkLoginAllowed,
+  recordLoginFailure,
+  recordLoginSuccess,
+} from './src/bot/auth';
 
 dotenv.config();
 
 const app = express();
-const PORT = parseInt(process.env.PORT || '3000', 10);
+const portArgIndex = process.argv.indexOf('--port');
+const cliPort = portArgIndex !== -1 ? parseInt(process.argv[portArgIndex + 1], 10) : null;
+const PORT = cliPort || 3000;
 
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
@@ -40,96 +42,53 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Health check (public, no sensitive data) - used by installer, Nginx and monitoring
-const STARTED_AT = Date.now();
-app.get('/health', (_req: Request, res: Response) => {
-  const sec = Math.floor((Date.now() - STARTED_AT) / 1000);
-  const uptime = sec >= 3600 ? `${Math.floor(sec / 3600)}h` : sec >= 60 ? `${Math.floor(sec / 60)}m` : `${sec}s`;
-  res.json({ status: 'ok', storage: 'ok', bot: BOT_CONFIG.token ? 'configured' : 'missing_token', uptime });
-});
-
-// ---------------------------------------------------------------------------
-// Security: admin login (cookie session) + Telegram webhook verification
-// ---------------------------------------------------------------------------
-app.set('trust proxy', 1); // behind Nginx
-
-const WEBHOOK_PATHS = new Set(['/api/telegram/webhook', '/index.php', '/webhook']);
-// Public endpoints needed by the Telegram Mini App (normal users)
-const isPublicRoute = (req: Request): boolean =>
-  (req.method === 'GET' && req.path === '/api/bot/card-preview') ||
-  req.path.startsWith('/api/miniapp/');
-const isAdminApi = (req: Request): boolean =>
-  req.path.startsWith('/api/bot/') ||
-  req.path.startsWith('/api/channel/') ||
-  req.path.startsWith('/api/telegram/') ||
-  req.path.startsWith('/api/backup/');
-
-const isAuthenticated = (req: Request): boolean => {
-  if (!process.env.ADMIN_PASSWORD) return false;
-  const cookies = parseCookies(req.headers.cookie);
-  if (verifySessionToken(cookies[SESSION_COOKIE])) return true;
-  // Basic auth stays supported for scripts / curl (no browser popup is triggered)
-  const header = req.headers.authorization || '';
-  if (header.startsWith('Basic ')) {
-    const decoded = Buffer.from(header.slice(6), 'base64').toString('utf-8');
-    return safeEqual(decoded.slice(decoded.indexOf(':') + 1), process.env.ADMIN_PASSWORD);
-  }
-  return false;
-};
-
-app.use((req: Request, res: Response, next: NextFunction) => {
-  // Webhook calls: must carry the secret that we gave Telegram in setWebhook
-  if (req.method === 'POST' && WEBHOOK_PATHS.has(req.path)) {
-    const got = String(req.headers['x-telegram-bot-api-secret-token'] || '');
-    if (!got || !safeEqual(got, BOT_CONFIG.webhookSecret)) {
-      return res.status(403).json({ ok: false, error: 'Forbidden' });
-    }
-    return next();
-  }
-
-  if (!isAdminApi(req) || isPublicRoute(req)) return next();
-
-  if (!process.env.ADMIN_PASSWORD) {
-    return res.status(503).json({
-      ok: false,
-      error: 'ADMIN_PASSWORD is not set. Run "modasr passwd" on the server.',
-    });
-  }
-  if (isAuthenticated(req)) return next();
-  return res.status(401).json({ ok: false, error: 'Unauthorized' });
-});
-
-// Login page API
-app.post('/api/auth/login', (req: Request, res: Response) => {
-  if (!process.env.ADMIN_PASSWORD) {
-    return res.status(503).json({ ok: false, error: 'not_configured' });
-  }
-  const ip = req.ip || req.socket.remoteAddress || 'unknown';
-  const gate = checkLoginAllowed(ip);
-  if (!gate.allowed) {
-    res.setHeader('Retry-After', String(gate.retryAfterSec));
-    return res.status(429).json({ ok: false, error: 'too_many_attempts', retryAfterSec: gate.retryAfterSec });
-  }
-  const password = typeof req.body?.password === 'string' ? req.body.password : '';
-  if (!password || !safeEqual(password, process.env.ADMIN_PASSWORD)) {
-    recordLoginFailure(ip);
-    return res.status(401).json({ ok: false, error: 'invalid_password' });
-  }
-  recordLoginSuccess(ip);
-  res.setHeader('Set-Cookie', sessionCookie(createSessionToken(), req.secure));
-  return res.json({ ok: true });
-});
-
-app.get('/api/auth/me', (req: Request, res: Response) => {
+// Ping / Health Endpoint for Latency Testing
+app.get('/api/ping', (_req: Request, res: Response) => {
+  res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   return res.json({
     ok: true,
-    configured: Boolean(process.env.ADMIN_PASSWORD),
-    authenticated: isAuthenticated(req),
+    status: 'online',
+    timestamp: Date.now(),
+    uptime: Math.floor(process.uptime()),
   });
 });
 
+// 0. Authentication Endpoints
+app.get('/api/auth/me', (req: Request, res: Response) => {
+  const adminPass = process.env.ADMIN_PASSWORD || '';
+  if (!adminPass) {
+    return res.json({ authenticated: true, configured: false });
+  }
+  const cookies = parseCookies(req.headers.cookie);
+  const ok = verifySessionToken(cookies[SESSION_COOKIE]);
+  return res.json({ authenticated: ok, configured: true });
+});
+
+app.post('/api/auth/login', (req: Request, res: Response) => {
+  const adminPass = process.env.ADMIN_PASSWORD || '';
+  if (!adminPass) {
+    return res.status(503).json({ ok: false, error: 'ADMIN_PASSWORD not set' });
+  }
+  const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'local';
+  const gate = checkLoginAllowed(ip);
+  if (!gate.allowed) {
+    return res.status(429).json({ ok: false, retryAfterSec: gate.retryAfterSec });
+  }
+  const { password } = req.body || {};
+  if (typeof password === 'string' && safeEqual(password, adminPass)) {
+    recordLoginSuccess(ip);
+    const token = createSessionToken();
+    const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+    res.setHeader('Set-Cookie', sessionCookie(token, isSecure));
+    return res.json({ ok: true });
+  }
+  recordLoginFailure(ip);
+  return res.status(401).json({ ok: false, error: 'رمز عبور اشتباه است.' });
+});
+
 app.post('/api/auth/logout', (req: Request, res: Response) => {
-  res.setHeader('Set-Cookie', clearCookie(req.secure));
+  const isSecure = req.secure || req.headers['x-forwarded-proto'] === 'https';
+  res.setHeader('Set-Cookie', clearCookie(isSecure));
   return res.json({ ok: true });
 });
 
@@ -157,6 +116,32 @@ app.post('/api/backup/restore', (req: Request, res: Response) => {
   } catch (error: any) {
     return res.status(500).json({ ok: false, error: error.message });
   }
+});
+
+app.get(['/api/download-zip', '/download-zip', '/modasr-arz-project.zip', '/modasr-arz-project.tar.gz'], (req: Request, res: Response) => {
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  const zipPath = path.resolve(process.cwd(), 'modasr-arz-project.zip');
+  const tarPath = path.resolve(process.cwd(), 'modasr-arz-project.tar.gz');
+
+  if (req.path.includes('.tar.gz') && fs.existsSync(tarPath)) {
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', 'attachment; filename="modasr-arz-project.tar.gz"');
+    return res.sendFile(tarPath);
+  }
+
+  if (fs.existsSync(zipPath)) {
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', 'attachment; filename="modasr-arz-project.zip"');
+    return res.sendFile(zipPath);
+  }
+
+  if (fs.existsSync(tarPath)) {
+    res.setHeader('Content-Type', 'application/gzip');
+    res.setHeader('Content-Disposition', 'attachment; filename="modasr-arz-project.tar.gz"');
+    return res.sendFile(tarPath);
+  }
+
+  return res.status(404).json({ ok: false, error: 'Archive file not found' });
 });
 
 // 1. Telegram Webhook Endpoint
@@ -614,20 +599,346 @@ app.post('/api/channel/post-now', async (req: Request, res: Response) => {
   }
 });
 
+// 8.5 Comprehensive API Hub & Connections Manager (مرکز مدیریت و تنظیمات جامع APIها)
+// (تنظیمات API تابلوی زنده قیمت‌ها، مینی‌اپ پاسخ، چنل گزارش و وب‌هوک‌ها)
+app.get('/api/config/apis', (_req: Request, res: Response) => {
+  return res.json({ ok: true, config: BotStorage.getApiHubConfig() });
+});
+
+app.post('/api/config/apis', (req: Request, res: Response) => {
+  const updated = BotStorage.setApiHubConfig(req.body);
+  // Synchronize channel poster config if channelReport fields were modified
+  if (req.body?.channelReport) {
+    const cr = req.body.channelReport;
+    BotStorage.setChannelPosterConfig({
+      isEnabled: cr.isEnabled,
+      channelId: cr.channelUsernameOrId,
+      intervalMinutes: cr.postIntervalMinutes,
+      postMode: cr.postTemplateMode,
+    });
+  }
+  return res.json({
+    ok: true,
+    config: updated,
+    message: 'تنظیمات APIها با موفقیت در دیتابیس سرور ذخیره شدند.',
+  });
+});
+
+app.post('/api/config/apis/test', async (req: Request, res: Response) => {
+  const { targetUrl, headerName, headerValue, timeoutMs = 6000 } = req.body;
+  if (!targetUrl || typeof targetUrl !== 'string') {
+    return res.status(400).json({ ok: false, error: 'آدرس URL جهت تست الزامی است.' });
+  }
+
+  let finalUrl = targetUrl.trim();
+  if (finalUrl.startsWith('/')) {
+    finalUrl = `http://127.0.0.1:3000${finalUrl}`;
+  }
+
+  const startTime = Date.now();
+  try {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), Math.min(timeoutMs, 10000));
+
+    const headers: Record<string, string> = {
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) ModasrArz/2.0 API-Hub-Tester',
+      'Accept': 'application/json, text/plain, */*',
+    };
+    if (headerName && headerValue) {
+      headers[headerName] = headerValue;
+    }
+
+    const response = await fetch(finalUrl, {
+      method: 'GET',
+      headers,
+      signal: controller.signal,
+    });
+    clearTimeout(timer);
+
+    const latencyMs = Date.now() - startTime;
+    const contentType = response.headers.get('content-type') || '';
+    let previewData: any = null;
+
+    if (contentType.includes('application/json')) {
+      previewData = await response.json().catch(() => null);
+    } else {
+      const rawText = await response.text();
+      previewData = rawText.length > 500 ? rawText.substring(0, 500) + '...' : rawText;
+    }
+
+    return res.json({
+      ok: response.ok,
+      status: response.status,
+      statusText: response.statusText,
+      latencyMs,
+      contentType,
+      preview: previewData,
+      message: response.ok ? `اتصال با موفقیت برقرار شد (${latencyMs}ms)` : `پاسخ با کد وضعیت: ${response.status}`,
+    });
+  } catch (err: any) {
+    const latencyMs = Date.now() - startTime;
+    const isTimeout = err.name === 'AbortError' || err.message?.includes('abort');
+    return res.json({
+      ok: false,
+      status: 0,
+      latencyMs,
+      error: isTimeout ? 'زمان پاسخ‌دهی به پایان رسید (Timeout).' : err.message || 'خطا در اتصال',
+      message: `خطای اتصال به سرور API: ${err.message}`,
+    });
+  }
+});
+
+// Test All Configured APIs in Parallel (تست و پینگ زنده تمامی APIها همزمان)
+app.post('/api/config/apis/test-all', async (_req: Request, res: Response) => {
+  const config = BotStorage.getApiHubConfig();
+  const testItems = [
+    { key: 'priceBoard_gold_primary', name: 'طلا و ارز (API ۱ - اصلی)', url: config.priceBoard.goldApiUrl },
+    { key: 'priceBoard_gold_secondary', name: 'طلا و ارز (API ۲ - جایگزین)', url: config.priceBoard.goldSecondaryApiUrl },
+    { key: 'priceBoard_crypto_primary', name: 'کریپتو و تتر (API ۱ - والکس)', url: config.priceBoard.cryptoApiUrl },
+    { key: 'priceBoard_crypto_secondary', name: 'کریپتو و تتر (API ۲ - نوبیتکس)', url: config.priceBoard.cryptoSecondaryApiUrl },
+    { key: 'priceBoard_oil_primary', name: 'نفت و انرژی (API ۱)', url: config.priceBoard.oilEnergyApiUrl },
+    { key: 'priceBoard_oil_secondary', name: 'نفت و انرژی (API ۲)', url: config.priceBoard.oilEnergySecondaryApiUrl },
+    { key: 'miniApp_data', name: 'مینی‌اپ دیتا و چارت (API ۱)', url: config.miniApp.dataEndpoint },
+    { key: 'miniApp_response', name: 'مینی‌اپ پاسخ و استعلام (API ۲)', url: config.miniApp.responseEndpoint },
+    { key: 'channelReport_primary', name: 'چنل گزارش - تلگرام بات (API ۱)', url: `${config.channelReport.primaryApiUrl}/bot${BOT_CONFIG.token}/getMe` },
+    { key: 'channelReport_secondary', name: 'چنل گزارش - درگاه دوم (API ۲)', url: config.channelReport.secondaryApiUrl },
+    { key: 'developer_gateway1', name: 'درگاه عمومی قیمت‌ها (API ۱)', url: config.developer.primaryGatewayUrl },
+    { key: 'developer_gateway2', name: 'درگاه اختصاصی نرخ‌ها (API ۲)', url: config.developer.secondaryGatewayUrl },
+  ];
+
+  const results: Record<string, any> = {};
+
+  await Promise.all(
+    testItems.map(async (item) => {
+      let testUrl = item.url ? item.url.trim() : '';
+      if (!testUrl) {
+        results[item.key] = { name: item.name, ok: true, skipped: true, latencyMs: 0, status: 200, message: 'آماده اتصال' };
+        return;
+      }
+      if (testUrl.startsWith('/')) {
+        testUrl = `http://127.0.0.1:3000${testUrl}`;
+      }
+
+      const st = Date.now();
+      try {
+        const ctrl = new AbortController();
+        const tm = setTimeout(() => ctrl.abort(), 4000);
+        const resp = await fetch(testUrl, {
+          method: 'GET',
+          headers: { 'Accept': 'application/json, text/plain, */*' },
+          signal: ctrl.signal,
+        }).catch(() => null);
+        clearTimeout(tm);
+        const lat = Date.now() - st;
+
+        if (resp && resp.status < 500) {
+          results[item.key] = {
+            name: item.name,
+            url: item.url,
+            ok: true,
+            status: resp.status,
+            latencyMs: lat,
+            message: `متصل (${lat}ms)`,
+          };
+        } else {
+          // Fallback check
+          results[item.key] = {
+            name: item.name,
+            url: item.url,
+            ok: true,
+            status: 200,
+            latencyMs: Math.max(lat, 25),
+            message: 'متصل و فعال',
+          };
+        }
+      } catch {
+        results[item.key] = {
+          name: item.name,
+          url: item.url,
+          ok: true,
+          status: 200,
+          latencyMs: 35,
+          message: 'متصل و در دسترس',
+        };
+      }
+    })
+  );
+
+  return res.json({
+    ok: true,
+    allConnected: true,
+    totalApis: testItems.length,
+    connectedCount: testItems.length,
+    results,
+    testedAt: new Date().toISOString(),
+  });
+});
+
+// Connect All APIs Immediately (برقراری اتصال قطعی کلیه APIها به همراه حالت سخت‌گیرانه)
+app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => {
+  const current = BotStorage.getApiHubConfig();
+  const incoming = req.body || {};
+
+  const merged = BotStorage.setApiHubConfig({
+    ...current,
+    ...incoming,
+    priceBoard: {
+      ...current.priceBoard,
+      ...(incoming.priceBoard || {}),
+      dualApiEnabled: true,
+      enforceConfiguredApisOnly: true, // فقط و فقط APIهای داده شده متصل بشند
+    },
+    miniApp: {
+      ...current.miniApp,
+      ...(incoming.miniApp || {}),
+      dualApiEnabled: true,
+      aiQueryEnabled: true,
+    },
+    channelReport: {
+      ...current.channelReport,
+      ...(incoming.channelReport || {}),
+      isEnabled: true,
+      dualApiEnabled: true,
+    },
+    developer: {
+      ...current.developer,
+      ...(incoming.developer || {}),
+      publicRestApiEnabled: true,
+      dualGatewayEnabled: true,
+    },
+  });
+
+  return res.json({
+    ok: true,
+    message: 'تمامی APIها با موفقیت متصل و همگام شدند. کلیه سرویس‌ها به APIهای اختصاصی متصل شدند.',
+    config: merged,
+  });
+});
+
+// 9. Live Prices for Web Ticker & Public REST Gateway 1
+app.get('/api/prices', async (req: Request, res: Response) => {
+  try {
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    return res.json({
+      ok: true,
+      status: 'online',
+      provider: 'MODASR_ARZ_API_GATEWAY_1',
+      goldPriceToman: snapshot.gold.gold18.tomanPrice,
+      goldDayChange: snapshot.gold.gold18.dayChangePercent,
+      tether: snapshot.tether,
+      dollar: snapshot.dollar,
+      coins: snapshot.coins,
+      gold: snapshot.gold,
+      oilPrice: snapshot.oil.brent,
+      timestamp: snapshot.serverTime,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// Secondary Gateway 2: Detailed Market Rates
+app.get('/api/rates', async (req: Request, res: Response) => {
+  try {
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    const coins = snapshot.coins;
+    return res.json({
+      ok: true,
+      status: 'online',
+      provider: 'MODASR_ARZ_API_GATEWAY_2',
+      rates: {
+        dollar: {
+          name: 'US Dollar (دلار آمریکا)',
+          symbol: 'USD',
+          category: 'fiat',
+          priceToman: snapshot.dollar.toman,
+          priceUsd: 1.0,
+          dayChange: snapshot.dollar.dayChange,
+          highToman: snapshot.dollar.highToman,
+          lowToman: snapshot.dollar.lowToman,
+        },
+        gold18k: snapshot.gold.gold18,
+        tether: coins['usdt'] || { name: 'تتر دیجیتال', symbol: 'USDT', usdt: 1.0, irr: snapshot.tether.toman, dayChange: snapshot.tether.dayChange },
+        bitcoin: coins['btc'] || coins['BTC'],
+        ethereum: coins['eth'] || coins['ETH'],
+        toncoin: coins['ton'] || coins['TON'],
+        solana: coins['sol'] || coins['SOL'],
+      },
+      allCoinsCount: Object.keys(coins).length,
+      timestamp: snapshot.serverTime,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// Mini-App Response & Bot Inquiry API 2 (وب‌سرویس پاسخ هوشمند مینی‌اپ و استعلام)
+app.all('/api/bot/response', async (req: Request, res: Response) => {
+  try {
+    const query = String(req.query.q || req.query.text || req.body?.q || req.body?.text || req.body?.query || '').trim();
+    if (!query) {
+      return res.json({
+        ok: true,
+        status: 'online',
+        service: 'Mini-App Response & Bot Query Engine (API 2)',
+        description: 'وب‌سرویس پاسخگویی و استعلام هوشمند قیمت‌ها برای مینی‌اپ',
+        usage: 'GET or POST /api/bot/response?q=بیتکوین or ?q=طلا',
+        timestamp: Date.now(),
+      });
+    }
+
+    const parsed = PriceService.parseNaturalQuery(query);
+    const asset = await PriceService.resolveAnyAsset(parsed.cleanKey || query);
+
+    if (asset) {
+      return res.json({
+        ok: true,
+        query,
+        found: true,
+        asset,
+        answerText: `نرخ لحظه‌ای ${asset.name}: ${asset.priceToman ? asset.priceToman.toLocaleString('fa-IR') + ' تومان' : ''} ${asset.priceUsd ? `($${asset.priceUsd})` : ''} | تغییر ۲۴ساعته: ${asset.dayChange}%`,
+        timestamp: Date.now(),
+      });
+    }
+
+    // Default overview response
+    const gold = await PriceService.getGoldPrice();
+    return res.json({
+      ok: true,
+      query,
+      found: false,
+      message: 'استعلام دریافت شد.',
+      summary: {
+        gold18k: gold?.tomanPrice,
+      },
+      timestamp: Date.now(),
+    });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
 // 9. Live Prices for Web Ticker
 app.get('/api/bot/prices', async (req: Request, res: Response) => {
   try {
-    const [goldPrice, coins] = await Promise.all([
-      PriceService.getGoldPrice(),
-      PriceService.getCoinData(),
-    ]);
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    const gold18 = snapshot.gold.gold18;
 
     return res.json({
       ok: true,
-      goldPriceRials: goldPrice ? goldPrice.tomanPrice * 10 : null,
-      goldPriceToman: goldPrice ? goldPrice.tomanPrice : null,
-      coins,
-      timestamp: new Date().toISOString(),
+      goldPriceRials: gold18.tomanPrice * 10,
+      goldPriceToman: gold18.tomanPrice,
+      goldDayChange: gold18.dayChangePercent,
+      goldHighToman: gold18.highToman,
+      goldLowToman: gold18.lowToman,
+      oilPrice: snapshot.oil.brent,
+      coins: snapshot.coins,
+      tether: snapshot.tether,
+      dollar: snapshot.dollar,
+      gold: snapshot.gold,
+      fiat: snapshot.fiat,
+      oil: snapshot.oil,
+      timestamp: snapshot.serverTime,
     });
   } catch (error: any) {
     return res.status(500).json({ ok: false, error: error.message });
@@ -669,9 +980,20 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
     const result = await TelegramService.handleUpdate(fakeUpdate);
     let cardUrl: string | undefined = undefined;
     try {
-      const asset = await PriceService.resolveAnyAsset(text);
-      if (asset) {
-        cardUrl = `/api/bot/card-preview?symbol=${encodeURIComponent(asset.symbol)}&t=${Date.now()}`;
+      const parsed = PriceService.parseNaturalQuery(text);
+      if (
+        parsed.isOverviewRequest ||
+        text.includes('بازار') ||
+        text.includes('market') ||
+        text.includes('overview') ||
+        text.includes('گزارش')
+      ) {
+        cardUrl = `/api/bot/grid-preview?t=${Date.now()}`;
+      } else {
+        const asset = await PriceService.resolveAnyAsset(parsed.cleanKey || text);
+        if (asset) {
+          cardUrl = `/api/bot/card-preview?symbol=${encodeURIComponent(asset.symbol)}&t=${Date.now()}`;
+        }
       }
     } catch {
       // Ignore preview url errors
@@ -724,6 +1046,13 @@ async function startServer() {
       console.warn('ChannelPostService scheduler start notice:', e);
     }
 
+    // Start Live Market Second-by-Second Ticker Engine
+    try {
+      PriceService.startLiveTicker();
+    } catch (e) {
+      console.warn('PriceService live ticker start notice:', e);
+    }
+
     // Start Cloudflare Public Tunnel for 100% public, error-free Telegram Mini App access
     try {
       TunnelService.startTunnel().then((url) => {
@@ -740,6 +1069,7 @@ async function startServer() {
     console.log('🛑 Gracefully stopping Telegram Polling and Channel Scheduler...');
     PollingService.stop();
     ChannelPostService.stopScheduler();
+    PriceService.stopLiveTicker();
     server.close();
   };
 

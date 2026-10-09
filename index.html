@@ -16,6 +16,24 @@
     <link href="https://fonts.googleapis.com/css2?family=Vazirmatn:wght@300;400;500;600;700;800;900&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
     <script>
       (function() {
+        // 0. Ensure window.fetch is writable and cannot throw 'Cannot set property fetch of #<Window> which has only a getter'
+        try {
+          var originalFetch = window.fetch ? window.fetch.bind(window) : null;
+          var currentFetch = originalFetch;
+          Object.defineProperty(window, 'fetch', {
+            get: function() {
+              return currentFetch;
+            },
+            set: function(fn) {
+              currentFetch = fn;
+            },
+            configurable: true,
+            enumerable: true
+          });
+        } catch (e) {
+          // fallback if Object.defineProperty is restricted
+        }
+
         // 1. Intercept console.error to prevent Vite HMR websocket noise from appearing in AI Studio logs
         var origConsoleError = console.error;
         console.error = function() {
