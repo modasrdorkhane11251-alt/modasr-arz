@@ -1,5 +1,6 @@
 import fs from 'fs';
 import path from 'path';
+import { exec } from 'child_process';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
 
@@ -273,7 +274,6 @@ export class BotStorage {
       const data = JSON.parse(fs.readFileSync(EMOJI_CONFIG_FILE, 'utf-8'));
       const existingItems: CustomEmojiItem[] = Array.isArray(data.items) ? data.items : [];
 
-      // Merge: maintain full set of all supported assets, preserving any user modifications
       const mergedMap = new Map<string, CustomEmojiItem>();
       for (const def of DEFAULT_EMOJI_ITEMS) {
         mergedMap.set(def.key, { ...def });
@@ -309,8 +309,7 @@ export class BotStorage {
     const config = this.getEmojiConfig();
     const id = item.id || `emoji_${Date.now()}`;
     const key = (item.key || item.name).trim().toLowerCase();
-    
-    // Extract emoji ID if present
+
     let emojiId = item.emojiId;
     const match = item.emojiTag.match(/id=([0-9]+)/);
     if (match) {
@@ -334,7 +333,6 @@ export class BotStorage {
       config.items.push(newItem);
     }
 
-    // Sync primary field if standard key
     if (key === 'coin') config.coinEmoji = newItem.emojiTag;
     if (key === 'toman') config.tomanEmoji = newItem.emojiTag;
     if (key === 'dollar') config.dollarEmoji = newItem.emojiTag;
@@ -536,9 +534,6 @@ export class BotStorage {
     return updated;
   }
 
-  /**
-   * Export complete application state and configurations for Backup
-   */
   static exportBackup(): any {
     return {
       version: '2.0.0',
@@ -561,9 +556,6 @@ export class BotStorage {
     };
   }
 
-  /**
-   * Restore application state and configurations from a Backup payload
-   */
   static restoreBackup(payload: any): { success: boolean; message: string; details?: any } {
     try {
       if (!payload || typeof payload !== 'object') {
@@ -643,5 +635,52 @@ export class BotStorage {
       console.error('Failed to restore backup:', err);
       return { success: false, message: `خطا در بازیابی اطلاعات: ${err.message}` };
     }
+  }
+
+  // ==========================================================================
+  // NEW: Update .env credentials from admin panel
+  // ==========================================================================
+  static updateEnvCredentials(updates: Record<string, string>): { ok: boolean; message: string } {
+    const envPath = path.resolve(process.cwd(), '.env');
+    try {
+      const existing = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf-8') : '';
+      const lines = existing.split('\n');
+      const handled = new Set<string>();
+
+      const newLines = lines.map((line) => {
+        const match = line.match(/^([A-Z_][A-Z0-9_]*)=(.*)$/);
+        if (match && updates[match[1]] !== undefined) {
+          handled.add(match[1]);
+          return `${match[1]}=${updates[match[1]]}`;
+        }
+        return line;
+      });
+
+      for (const [key, val] of Object.entries(updates)) {
+        if (!handled.has(key)) newLines.push(`${key}=${val}`);
+      }
+
+      while (newLines.length > 0 && newLines[newLines.length - 1].trim() === '') {
+        newLines.pop();
+      }
+
+      fs.writeFileSync(envPath, newLines.join('\n') + '\n', { mode: 0o600 });
+      return { ok: true, message: 'saved' };
+    } catch (e: any) {
+      return { ok: false, message: e?.message || 'write failed' };
+    }
+  }
+
+  /**
+   * Restart PM2 process in detached mode so the HTTP response can be sent first.
+   */
+  static restartServiceSoon(delayMs: number = 800): void {
+    setTimeout(() => {
+      try {
+        exec('pm2 restart modasr-bot', { detached: true, stdio: 'ignore' } as any, () => { /* ignore */ });
+      } catch {
+        // ignore
+      }
+    }, delayMs);
   }
 }
