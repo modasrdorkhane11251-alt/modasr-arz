@@ -59,10 +59,6 @@ const PERSIAN_NAMES: Record<string, string> = {
   EGLD: 'مولتی ورس', BLUR: 'بلر',
 };
 
-// ============================================================================
-// PUBLIC INTERFACES
-// ============================================================================
-
 export interface CoinInfo {
   name?: string;
   symbol?: string;
@@ -171,10 +167,6 @@ export interface UnifiedMarketSnapshot {
   fiat: Record<string, AssetInfo>;
 }
 
-// ============================================================================
-// PRICE SERVICE
-// ============================================================================
-
 export class PriceService {
   private static unifiedSnapshot: UnifiedMarketSnapshot | null = null;
   private static lastSnapshotTime = 0;
@@ -182,11 +174,11 @@ export class PriceService {
   private static liveTickerInterval: NodeJS.Timeout | null = null;
   private static providerHealth = new Map<string, ProviderHealth>();
 
-  // ─── Price history for computing real change % when provider reports 0 ───
+  // Price history for computing real change % when provider reports 0
   private static priceHistory = new Map<string, Array<{ price: number; ts: number }>>();
-  private static readonly HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private static readonly HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000;
   private static readonly HISTORY_MAX_POINTS = 500;
-  private static readonly HISTORY_MIN_AGE_MS = 30 * 60 * 1000; // at least 30 min of data before we use it
+  private static readonly HISTORY_MIN_AGE_MS = 30 * 60 * 1000;
 
   private static readonly PRIORITY_COINS = [
     'BTC', 'ETH', 'SOL', 'TON', 'BNB', 'XRP', 'DOGE', 'TRX', 'LTC',
@@ -195,10 +187,6 @@ export class PriceService {
     'ARB', 'OP', 'APT', 'TIA', 'INJ', 'WLD', 'FET', 'RENDER', 'KAS',
     'HMSTR', 'DOGS', 'CATI', 'MAJOR', 'USDC', 'DAI',
   ];
-
-  // ---------------------------------------------------------------------------
-  // Lifecycle
-  // ---------------------------------------------------------------------------
 
   static clearCache(): void {
     this.unifiedSnapshot = null;
@@ -223,10 +211,6 @@ export class PriceService {
       this.liveTickerInterval = null;
     }
   }
-
-  // ---------------------------------------------------------------------------
-  // Provider health
-  // ---------------------------------------------------------------------------
 
   private static markProviderSuccess(name: string): void {
     const h = this.providerHealth.get(name) || {
@@ -274,10 +258,6 @@ export class PriceService {
     return out;
   }
 
-  // ---------------------------------------------------------------------------
-  // Fetch helpers
-  // ---------------------------------------------------------------------------
-
   private static buildHeaders(url: string): Record<string, string> {
     const headers: Record<string, string> = {
       'User-Agent':
@@ -296,7 +276,6 @@ export class PriceService {
     opts: { retries?: number; label?: string } = {}
   ): Promise<{ data: any; error?: string; status?: number; attempts: number }> {
     if (!url) return { data: null, error: 'empty url', attempts: 0 };
-
     const maxAttempts = (opts.retries ?? FETCH_RETRY_ATTEMPTS) + 1;
     let lastError = 'unknown';
     let lastStatus: number | undefined;
@@ -317,9 +296,7 @@ export class PriceService {
           const transient = res.status === 429 || res.status >= 500;
           if (transient && attempt < maxAttempts) {
             const retryAfter = Number(res.headers.get('retry-after')) || 0;
-            const waitMs = retryAfter > 0
-              ? retryAfter * 1000
-              : FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200;
+            const waitMs = retryAfter > 0 ? retryAfter * 1000 : FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200;
             await this.sleep(waitMs);
             continue;
           }
@@ -329,37 +306,27 @@ export class PriceService {
         const data = await res.json().catch(() => null);
         if (data === null) {
           lastError = 'invalid JSON';
-          if (attempt < maxAttempts) {
-            await this.sleep(FETCH_RETRY_BASE_MS * attempt);
-            continue;
-          }
+          if (attempt < maxAttempts) { await this.sleep(FETCH_RETRY_BASE_MS * attempt); continue; }
           return { data: null, error: lastError, attempts: attempt };
         }
-
         return { data, attempts: attempt };
       } catch (e: any) {
         clearTimeout(timer);
         lastError = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || String(e));
         const isNetwork = /fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout/i.test(lastError);
         if (isNetwork && attempt < maxAttempts) {
-          const waitMs = FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200;
-          await this.sleep(waitMs);
+          await this.sleep(FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200);
           continue;
         }
         return { data: null, error: lastError, attempts: attempt };
       }
     }
-
     return { data: null, error: lastError, status: lastStatus, attempts: maxAttempts };
   }
 
   private static sleep(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
-
-  // ---------------------------------------------------------------------------
-  // Validation
-  // ---------------------------------------------------------------------------
 
   private static isValidNumber(n: any): n is number {
     return typeof n === 'number' && Number.isFinite(n) && !Number.isNaN(n);
@@ -378,23 +345,15 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // PRICE HISTORY — records each fetch to compute real change % over time
+  // PRICE HISTORY
   // ==========================================================================
 
-  /**
-   * Record a price observation for a given asset key.
-   * Keeps the last 24h of data. If a point was recorded within the last 30s,
-   * it's replaced (deduplication).
-   */
   private static recordPrice(key: string, price: number): void {
     if (!this.isValidNumber(price) || price <= 0) return;
     const now = Date.now();
     let arr = this.priceHistory.get(key) || [];
-
-    // Drop entries older than 24h
     arr = arr.filter((p) => now - p.ts < this.HISTORY_MAX_AGE_MS);
 
-    // If a point was recorded within last 30s, replace it
     const last = arr[arr.length - 1];
     if (last && now - last.ts < 30_000) {
       arr[arr.length - 1] = { price, ts: now };
@@ -402,41 +361,25 @@ export class PriceService {
       arr.push({ price, ts: now });
     }
 
-    // Cap size
-    if (arr.length > this.HISTORY_MAX_POINTS) {
-      arr = arr.slice(-this.HISTORY_MAX_POINTS);
-    }
-
+    if (arr.length > this.HISTORY_MAX_POINTS) arr = arr.slice(-this.HISTORY_MAX_POINTS);
     this.priceHistory.set(key, arr);
   }
 
-  /**
-   * Compute change % between oldest recorded price and current price.
-   * Returns null if we don't have at least 30 minutes of history.
-   */
   private static computeHistoryChange(key: string, currentPrice: number): number | null {
     const arr = this.priceHistory.get(key);
     if (!arr || arr.length < 2) return null;
-
     const oldest = arr[0];
     if (!oldest || oldest.price <= 0) return null;
-
-    const ageMs = Date.now() - oldest.ts;
-    if (ageMs < this.HISTORY_MIN_AGE_MS) return null;
-
+    if (Date.now() - oldest.ts < this.HISTORY_MIN_AGE_MS) return null;
     if (!this.isValidNumber(currentPrice) || currentPrice <= 0) return null;
-
     const pct = ((currentPrice - oldest.price) / oldest.price) * 100;
     if (!Number.isFinite(pct)) return null;
-
-    // Reject obvious outliers
     if (Math.abs(pct) > 50) return null;
-
     return parseFloat(pct.toFixed(2));
   }
 
   // ==========================================================================
-  // MAIN SNAPSHOT BUILDER
+  // MAIN SNAPSHOT
   // ==========================================================================
 
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
@@ -465,7 +408,6 @@ export class PriceService {
       console.error('[PriceService] FATAL in snapshot fetch:', e?.message || e);
       console.error(e?.stack || '');
       errors.push(`fatal: ${e?.message || e}`);
-
       if (this.unifiedSnapshot) {
         this.unifiedSnapshot.metadata.isStale = true;
         this.unifiedSnapshot.metadata.errors = errors;
@@ -479,10 +421,7 @@ export class PriceService {
     const nowIso = new Date().toISOString();
     return {
       timestamp: t0, serverTime: nowIso, persianTime: nowIso,
-      metadata: {
-        fetchedAt: t0, generatedAt: t0, isLive: false, isStale: true, ageMs: 0,
-        unavailableAssets: ['all'], providers: {}, errors,
-      },
+      metadata: { fetchedAt: t0, generatedAt: t0, isLive: false, isStale: true, ageMs: 0, unavailableAssets: ['all'], providers: {}, errors },
       tether: { toman: 0, usd: 1.0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', unavailable: true },
       dollar: { toman: 0, usd: 1.0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', unavailable: true },
       gold: {}, oil: {}, coins: {}, fiat: {},
@@ -499,12 +438,8 @@ export class PriceService {
     const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
 
     const [goldRes, cryptoRes, tgjuRes] = await Promise.all([
-      goldUrl
-        ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-gold' })
-        : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
-      cryptoUrl
-        ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-crypto' })
-        : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
+      goldUrl ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-gold' }) : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
+      cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-crypto' }) : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
       this.fetchJson(TGJU_URL, FETCH_TIMEOUT_MS, { label: 'tgju' }),
     ]);
 
@@ -516,7 +451,6 @@ export class PriceService {
     if (!cryptoRes.data) errors.push(`crypto: ${cryptoRes.error}`);
     if (!tgjuRes.data) errors.push(`tgju: ${tgjuRes.error}`);
 
-    // Extract dollar FIRST so tether can fall back to its change
     const dollarData = this.extractDollar(tgjuRes.data);
     if (!dollarData.isLive) unavailable.push('usd');
 
@@ -567,35 +501,14 @@ export class PriceService {
       serverTime: nowIso,
       persianTime,
       metadata: {
-        fetchedAt: fetchStart,
-        generatedAt: fetchStart,
-        isLive,
-        isStale: !isLive,
-        ageMs: 0,
+        fetchedAt: fetchStart, generatedAt: fetchStart,
+        isLive, isStale: !isLive, ageMs: 0,
         unavailableAssets: unavailable,
         providers: this.getProviderSummary(),
         errors,
       },
-      tether: {
-        toman: tetherData.toman,
-        usd: 1.0,
-        dayChange: tetherData.dayChange,
-        highToman: tetherData.highToman,
-        lowToman: tetherData.lowToman,
-        source: tetherData.source,
-        isStale: !tetherData.isLive,
-        unavailable: !tetherData.isLive,
-      },
-      dollar: {
-        toman: dollarData.toman,
-        usd: 1.0,
-        dayChange: dollarData.dayChange,
-        highToman: dollarData.highToman,
-        lowToman: dollarData.lowToman,
-        source: dollarData.source,
-        isStale: !dollarData.isLive,
-        unavailable: !dollarData.isLive,
-      },
+      tether: { toman: tetherData.toman, usd: 1.0, dayChange: tetherData.dayChange, highToman: tetherData.highToman, lowToman: tetherData.lowToman, source: tetherData.source, isStale: !tetherData.isLive, unavailable: !tetherData.isLive },
+      dollar: { toman: dollarData.toman, usd: 1.0, dayChange: dollarData.dayChange, highToman: dollarData.highToman, lowToman: dollarData.lowToman, source: dollarData.source, isStale: !dollarData.isLive, unavailable: !dollarData.isLive },
       gold: goldRecord,
       oil,
       coins,
@@ -604,14 +517,13 @@ export class PriceService {
 
     if (isLive || this.unifiedSnapshot === null) {
       this.unifiedSnapshot = snapshot;
-      this.lastSnapshotTime = fetchStart;
+      this.lastSnapshotTime = Date.now();   // FIX: end-time of fetch, not start
     } else if (this.unifiedSnapshot) {
       console.warn('[PriceService] all providers failed — keeping last known snapshot');
       this.unifiedSnapshot.metadata.isStale = true;
       this.unifiedSnapshot.metadata.errors = errors;
       return this.unifiedSnapshot;
     }
-
     return snapshot;
   }
 
@@ -624,31 +536,18 @@ export class PriceService {
     source: string; isLive: boolean;
   } {
     const result = cryptoData?.result;
-
     const usdt = result?.USDT || result?.usdt;
     if (usdt?.irr) {
       const pToman = parseFloat(String(usdt.irr));
       if (this.isValidTetherPrice(pToman)) {
         let ch = parseFloat(String(usdt.dayChange || '0')) || 0;
         if (ch === 0 && fallbackDayChange !== 0) ch = fallbackDayChange;
-
-        // Last resort: compute from our own price history
         if (ch === 0) {
           const histCh = this.computeHistoryChange('tether', pToman);
           if (histCh !== null) ch = histCh;
         }
-
-        // Record for future change calculations
         this.recordPrice('tether', pToman);
-
-        return {
-          toman: Math.round(pToman),
-          dayChange: ch,
-          highToman: Math.round(pToman * 1.005),
-          lowToman: Math.round(pToman * 0.995),
-          source: 'fast_creat',
-          isLive: true,
-        };
+        return { toman: Math.round(pToman), dayChange: ch, highToman: Math.round(pToman * 1.005), lowToman: Math.round(pToman * 0.995), source: 'fast_creat', isLive: true };
       }
     }
 
@@ -664,14 +563,9 @@ export class PriceService {
           if (histCh !== null) ch = histCh;
         }
         this.recordPrice('tether', pToman);
-        return {
-          toman: pToman, dayChange: ch,
-          highToman: Math.round(pToman * 1.005), lowToman: Math.round(pToman * 0.995),
-          source: 'nobitex_raw', isLive: true,
-        };
+        return { toman: pToman, dayChange: ch, highToman: Math.round(pToman * 1.005), lowToman: Math.round(pToman * 0.995), source: 'nobitex_raw', isLive: true };
       }
     }
-
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
@@ -696,7 +590,6 @@ export class PriceService {
         if (dayChange === 0 && high > 0 && low > 0 && high !== low) {
           dayChange = this.changeFromRange(pToman, high, low);
         }
-        // Last resort: use our own price history
         if (dayChange === 0) {
           const histCh = this.computeHistoryChange('dollar', pToman);
           if (histCh !== null) dayChange = histCh;
@@ -711,7 +604,6 @@ export class PriceService {
         };
       }
     }
-
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
@@ -721,7 +613,6 @@ export class PriceService {
     sekeRob: GoldExtract; sekeGerami: GoldExtract; silver: GoldExtract; ons: GoldExtract;
   } {
     const empty = (title: string): GoldExtract => new GoldExtract(title, 0, 0, 0, 0, false, 'unavailable');
-
     const g18  = empty('طلای ۱۸ عیار / 750');
     const g24  = empty('طلای ۲۴ عیار');
     const mes  = empty('مثقال طلا / آبشده نقدی');
@@ -741,30 +632,19 @@ export class PriceService {
         const pToman = Math.round(this.parseNumberFromRaw(f.p) / RIALS_PER_TOMAN);
         const high = Math.round(this.parseNumberFromRaw(f.h) / RIALS_PER_TOMAN);
         const low  = Math.round(this.parseNumberFromRaw(f.l) / RIALS_PER_TOMAN);
-
         let ch = parseFloat(String(f.dp || f.d || '0')) || 0;
-        if (ch === 0 && high > 0 && low > 0 && high !== low) {
-          ch = this.changeFromRange(pToman, high, low);
-        }
-        // Use price history for realistic change when provider gives 0
+        if (ch === 0 && high > 0 && low > 0 && high !== low) ch = this.changeFromRange(pToman, high, low);
         if (ch === 0) {
           const histCh = this.computeHistoryChange(key, pToman);
           if (histCh !== null) ch = histCh;
         }
         this.recordPrice(key, pToman);
-
         if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
       };
 
-      tg('geram18', g18);
-      tg('geram24', g24);
-      tg('mesghal', mes);
-      tg('sekee', skE);
-      tg('sekeb', skB);
-      tg('nim', skN);
-      tg('rob', skR);
-      tg('gerami', skG);
-      tg('silver', silv);
+      tg('geram18', g18); tg('geram24', g24); tg('mesghal', mes);
+      tg('sekee', skE); tg('sekeb', skB); tg('nim', skN);
+      tg('rob', skR); tg('gerami', skG); tg('silver', silv);
 
       const onsField = current['ons'];
       if (onsField?.p) {
@@ -773,9 +653,7 @@ export class PriceService {
           let ch = parseFloat(String(onsField.dp || onsField.d || '0')) || 0;
           const highUsd = this.parseNumberFromRaw(onsField.h);
           const lowUsd = this.parseNumberFromRaw(onsField.l);
-          if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
-            ch = this.changeFromRange(usdPrice, highUsd, lowUsd);
-          }
+          if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) ch = this.changeFromRange(usdPrice, highUsd, lowUsd);
           if (ch === 0) {
             const histCh = this.computeHistoryChange('ons', usdPrice);
             if (histCh !== null) ch = histCh;
@@ -794,9 +672,7 @@ export class PriceService {
         const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
         const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
         let finalCh = ch;
-        if (finalCh === 0 && highT > 0 && lowT > 0 && highT !== lowT) {
-          finalCh = this.changeFromRange(pToman, highT, lowT);
-        }
+        if (finalCh === 0 && highT > 0 && lowT > 0 && highT !== lowT) finalCh = this.changeFromRange(pToman, highT, lowT);
         if (finalCh === 0) {
           const histCh = this.computeHistoryChange(key, pToman);
           if (histCh !== null) finalCh = histCh;
@@ -815,33 +691,19 @@ export class PriceService {
         const highR = parseInt(String(item.highest || '0').replace(/[^0-9]/g, ''), 10);
         const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
 
-        if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(Math.round(pRials / RIALS_PER_TOMAN))) {
-          trySet(g18, 'gold18', pRials, highR, lowR, ch);
-        } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
-          trySet(g24, 'gold24', pRials, highR, lowR, ch);
-        } else if (title.includes('مثقال')) {
-          trySet(mes, 'mesghal', pRials, highR, lowR, ch);
-        } else if (title.includes('امامی')) {
-          trySet(skE, 'sekeEmami', pRials, highR, lowR, ch);
-        } else if (title.includes('بهار')) {
-          trySet(skB, 'sekeBahar', pRials, highR, lowR, ch);
-        } else if (title.includes('نیم')) {
-          trySet(skN, 'sekeNim', pRials, highR, lowR, ch);
-        } else if (title.includes('ربع')) {
-          trySet(skR, 'sekeRob', pRials, highR, lowR, ch);
-        } else if (title.includes('گرمی')) {
-          trySet(skG, 'sekeGerami', pRials, highR, lowR, ch);
-        } else if (title.includes('نقره')) {
-          trySet(silv, 'silver', pRials, highR, lowR, ch);
-        }
+        if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(Math.round(pRials / RIALS_PER_TOMAN))) trySet(g18, 'gold18', pRials, highR, lowR, ch);
+        else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) trySet(g24, 'gold24', pRials, highR, lowR, ch);
+        else if (title.includes('مثقال')) trySet(mes, 'mesghal', pRials, highR, lowR, ch);
+        else if (title.includes('امامی')) trySet(skE, 'sekeEmami', pRials, highR, lowR, ch);
+        else if (title.includes('بهار')) trySet(skB, 'sekeBahar', pRials, highR, lowR, ch);
+        else if (title.includes('نیم')) trySet(skN, 'sekeNim', pRials, highR, lowR, ch);
+        else if (title.includes('ربع')) trySet(skR, 'sekeRob', pRials, highR, lowR, ch);
+        else if (title.includes('گرمی')) trySet(skG, 'sekeGerami', pRials, highR, lowR, ch);
+        else if (title.includes('نقره')) trySet(silv, 'silver', pRials, highR, lowR, ch);
       }
     }
 
-    return {
-      gold18: g18, gold24: g24, mesghal: mes,
-      sekeEmami: skE, sekeBahar: skB, sekeNim: skN, sekeRob: skR, sekeGerami: skG,
-      silver: silv, ons: ons,
-    };
+    return { gold18: g18, gold24: g24, mesghal: mes, sekeEmami: skE, sekeBahar: skB, sekeNim: skN, sekeRob: skR, sekeGerami: skG, silver: silv, ons };
   }
 
   private static extractCoins(cryptoData: any, tetherToman: number): Record<string, CoinInfo> {
@@ -853,20 +715,16 @@ export class PriceService {
         if (symKey.toUpperCase() === 'USDT') continue;
         const it: any = item;
         if (!it || typeof it !== 'object') continue;
-
         const sym = symKey.toUpperCase();
         const toman = parseFloat(String(it.irr || '0'));
         const usdt = parseFloat(String(it.usdt || '0'));
         let dayCh = parseFloat(String(it.dayChange || '0')) || 0;
 
         if (toman > 0 || usdt > 0) {
-          const finalToman = toman > 0 ? Math.round(toman)
-            : (tetherToman > 0 ? Math.round(usdt * tetherToman) : 0);
-          const finalUsd = usdt > 0 ? usdt
-            : (tetherToman > 0 ? parseFloat((finalToman / tetherToman).toFixed(6)) : 0);
+          const finalToman = toman > 0 ? Math.round(toman) : (tetherToman > 0 ? Math.round(usdt * tetherToman) : 0);
+          const finalUsd = usdt > 0 ? usdt : (tetherToman > 0 ? parseFloat((finalToman / tetherToman).toFixed(6)) : 0);
 
           if (finalToman > 0 || finalUsd > 0) {
-            // Use price history to fill in the change % when provider reports 0
             if (dayCh === 0 && finalToman > 0) {
               const histCh = this.computeHistoryChange(sym.toLowerCase(), finalToman);
               if (histCh !== null) dayCh = histCh;
@@ -874,13 +732,9 @@ export class PriceService {
             if (finalToman > 0) this.recordPrice(sym.toLowerCase(), finalToman);
 
             const coin: CoinInfo = {
-              name: it.name || PERSIAN_NAMES[sym] || sym,
-              symbol: sym,
-              usdt: finalUsd,
-              irr: finalToman,
-              dayChange: dayCh,
-              source: 'fast_creat',
-              isDerived: usdt === 0 && tetherToman > 0,
+              name: it.name || PERSIAN_NAMES[sym] || sym, symbol: sym,
+              usdt: finalUsd, irr: finalToman, dayChange: dayCh,
+              source: 'fast_creat', isDerived: usdt === 0 && tetherToman > 0,
             };
             coins[sym.toLowerCase()] = coin;
             coins[sym] = coin;
@@ -890,150 +744,95 @@ export class PriceService {
     }
 
     if (tetherToman > 0) {
-      const usdt: CoinInfo = {
-        name: 'تتر دیجیتال', symbol: 'USDT',
-        usdt: 1.0, irr: tetherToman, dayChange: 0,
-        source: 'fast_creat',
-      };
-      coins['usdt'] = usdt;
-      coins['tether'] = usdt;
-      coins['USDT'] = usdt;
+      const usdt: CoinInfo = { name: 'تتر دیجیتال', symbol: 'USDT', usdt: 1.0, irr: tetherToman, dayChange: 0, source: 'fast_creat' };
+      coins['usdt'] = usdt; coins['tether'] = usdt; coins['USDT'] = usdt;
     }
 
     for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
       const std = standard.toLowerCase();
       if (coins[std]) coins[alias.toLowerCase()] = coins[std];
     }
-
     return coins;
   }
 
-  private static async enrichCoinsWithBinance24h(
-    coins: Record<string, CoinInfo>,
-    tetherToman: number
-  ): Promise<void> {
+  private static async enrichCoinsWithBinance24h(coins: Record<string, CoinInfo>, tetherToman: number): Promise<void> {
     const priority = this.PRIORITY_COINS;
-    let newCoins = 0;
-    let merged = 0;
-    let failed = 0;
-
+    let newCoins = 0, merged = 0, failed = 0;
     console.log(`[PriceService] Enriching ${priority.length} priority coins with Binance 24h data (concurrency=${BINANCE_CONCURRENCY})...`);
 
     for (let i = 0; i < priority.length; i += BINANCE_CONCURRENCY) {
       const batch = priority.slice(i, i + BINANCE_CONCURRENCY);
-      const results = await Promise.all(
-        batch.map(async (sym) => {
-          const url = `${BINANCE_TICKER_URL}?symbol=${sym}USDT`;
-          const r = await this.fetchJson(url, 3_500, { retries: 1, label: `binance:${sym}` });
-          return { sym, data: r.data, error: r.error };
-        })
-      );
+      const results = await Promise.all(batch.map(async (sym) => {
+        const r = await this.fetchJson(`${BINANCE_TICKER_URL}?symbol=${sym}USDT`, 3_500, { retries: 1, label: `binance:${sym}` });
+        return { sym, data: r.data, error: r.error };
+      }));
 
       for (const { sym, data, error } of results) {
         if (!data || !data.lastPrice) {
           failed++;
-          if (error && !/HTTP 400|HTTP 404/.test(error)) {
-            console.warn(`[PriceService] Binance ${sym}: ${error}`);
-          }
+          if (error && !/HTTP 400|HTTP 404/.test(error)) console.warn(`[PriceService] Binance ${sym}: ${error}`);
           continue;
         }
-
         const lastPrice = parseFloat(String(data.lastPrice || '0'));
         const openPrice = parseFloat(String(data.openPrice || '0'));
         const highPrice = parseFloat(String(data.highPrice || '0'));
         const lowPrice  = parseFloat(String(data.lowPrice  || '0'));
         const changePct = parseFloat(String(data.priceChangePercent || '0'));
-
         if (!Number.isFinite(lastPrice) || lastPrice <= 0) { failed++; continue; }
 
         const symUpper = sym.toUpperCase();
         const existing = coins[symUpper] || coins[sym.toLowerCase()];
         const tomanFromBinance = tetherToman > 0 ? Math.round(lastPrice * tetherToman) : 0;
-
         const highToman = highPrice > 0 && tetherToman > 0 ? Math.round(highPrice * tetherToman) : undefined;
         const lowToman  = lowPrice  > 0 && tetherToman > 0 ? Math.round(lowPrice  * tetherToman) : undefined;
 
         if (existing) {
           if (!existing.irr || existing.irr === 0) existing.irr = tomanFromBinance;
           if (!existing.usdt || existing.usdt === 0) existing.usdt = lastPrice;
-
           if (!existing.dayChange || existing.dayChange === 0) {
             existing.dayChange = Number.isFinite(changePct) ? changePct : 0;
-            // If Binance also reports 0, try our history
             if (existing.dayChange === 0 && existing.irr > 0) {
               const histCh = this.computeHistoryChange(sym.toLowerCase(), existing.irr);
               if (histCh !== null) existing.dayChange = histCh;
             }
           }
-
           existing.dayHighUsd = highPrice > 0 ? highPrice : undefined;
           existing.dayLowUsd  = lowPrice  > 0 ? lowPrice  : undefined;
-          existing.dayHighToman = highToman;
-          existing.dayLowToman  = lowToman;
+          existing.dayHighToman = highToman; existing.dayLowToman = lowToman;
           existing.openPrice24h = openPrice > 0 ? openPrice : undefined;
           merged++;
         } else {
           const coin: CoinInfo = {
-            name: PERSIAN_NAMES[symUpper] || symUpper,
-            symbol: symUpper,
-            usdt: lastPrice,
-            irr: tomanFromBinance,
+            name: PERSIAN_NAMES[symUpper] || symUpper, symbol: symUpper,
+            usdt: lastPrice, irr: tomanFromBinance,
             dayChange: Number.isFinite(changePct) ? changePct : 0,
             dayHighUsd: highPrice > 0 ? highPrice : undefined,
-            dayLowUsd:  lowPrice  > 0 ? lowPrice  : undefined,
-            dayHighToman: highToman,
-            dayLowToman:  lowToman,
+            dayLowUsd: lowPrice > 0 ? lowPrice : undefined,
+            dayHighToman: highToman, dayLowToman: lowToman,
             openPrice24h: openPrice > 0 ? openPrice : undefined,
-            source: 'binance',
-            isDerived: tomanFromBinance > 0,
+            source: 'binance', isDerived: tomanFromBinance > 0,
           };
-          coins[symUpper] = coin;
-          coins[sym.toLowerCase()] = coin;
+          coins[symUpper] = coin; coins[sym.toLowerCase()] = coin;
           newCoins++;
         }
 
-        // Always record in history for future change calculations
-        if (tomanFromBinance > 0) {
-          this.recordPrice(sym.toLowerCase(), tomanFromBinance);
-        }
+        if (tomanFromBinance > 0) this.recordPrice(sym.toLowerCase(), tomanFromBinance);
       }
     }
-
     console.log(`[PriceService] Binance enrichment done — merged=${merged} new=${newCoins} failed=${failed}`);
   }
 
   private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
-    const usd: AssetInfo = {
-      key: 'usd', name: 'US Dollar (دلار آمریکا)', symbol: 'USD', category: 'fiat',
-      priceToman: dollarToman || undefined,
-      priceUsd: 1.0,
-      dayChange: 0,
-      unavailable: !dollarLive,
-      source: 'tgju',
-    };
-
+    const usd: AssetInfo = { key: 'usd', name: 'US Dollar (دلار آمریکا)', symbol: 'USD', category: 'fiat', priceToman: dollarToman || undefined, priceUsd: 1.0, dayChange: 0, unavailable: !dollarLive, source: 'tgju' };
     const crosses: Array<[string, string, number]> = [
-      ['eur', 'Euro (یورو)', 1.08],
-      ['gbp', 'British Pound (پوند)', 1.27],
-      ['aed', 'UAE Dirham (درهم)', 0.272],
-      ['try', 'Turkish Lira (لیر)', 0.029],
-      ['cny', 'Chinese Yuan (یوان)', 0.138],
-      ['cad', 'Canadian Dollar', 0.73],
-      ['aud', 'Australian Dollar', 0.66],
-      ['chf', 'Swiss Franc', 1.12],
+      ['eur', 'Euro (یورو)', 1.08], ['gbp', 'British Pound (پوند)', 1.27],
+      ['aed', 'UAE Dirham (درهم)', 0.272], ['try', 'Turkish Lira (لیر)', 0.029],
+      ['cny', 'Chinese Yuan (یوان)', 0.138], ['cad', 'Canadian Dollar', 0.73],
+      ['aud', 'Australian Dollar', 0.66], ['chf', 'Swiss Franc', 1.12],
     ];
-
     const out: Record<string, AssetInfo> = { usd };
     for (const [key, name, ratio] of crosses) {
-      out[key] = {
-        key, name, symbol: key.toUpperCase(), category: 'fiat',
-        priceUsd: ratio,
-        priceToman: dollarToman > 0 ? Math.round(ratio * dollarToman) : undefined,
-        dayChange: 0,
-        isDerived: true,
-        unavailable: !dollarLive,
-        source: 'derived',
-      };
+      out[key] = { key, name, symbol: key.toUpperCase(), category: 'fiat', priceUsd: ratio, priceToman: dollarToman > 0 ? Math.round(ratio * dollarToman) : undefined, dayChange: 0, isDerived: true, unavailable: !dollarLive, source: 'derived' };
     }
     return out;
   }
@@ -1041,7 +840,6 @@ export class PriceService {
   private static extractOil(tgjuData: any): Record<string, AssetInfo> {
     const current = tgjuData?.current || tgjuData?.data?.current;
     const out: Record<string, AssetInfo> = {};
-
     const makeOil = (key: string, name: string, symbol: string, fieldKey: string): AssetInfo => {
       const f = current?.[fieldKey];
       if (f?.p) {
@@ -1049,27 +847,16 @@ export class PriceService {
         let ch = parseFloat(String(f.dp || f.d || '0')) || 0;
         const highUsd = this.parseNumberFromRaw(f.h);
         const lowUsd = this.parseNumberFromRaw(f.l);
-        if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
-          ch = this.changeFromRange(usd, highUsd, lowUsd);
-        }
+        if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) ch = this.changeFromRange(usd, highUsd, lowUsd);
         if (ch === 0) {
           const histCh = this.computeHistoryChange(key, usd);
           if (histCh !== null) ch = histCh;
         }
         this.recordPrice(key, usd);
-        if (usd > 0 && usd < 10_000) {
-          return {
-            key, name, symbol, category: 'oil',
-            priceUsd: usd,
-            dayChange: ch,
-            unit: 'per barrel',
-            source: 'tgju',
-          };
-        }
+        if (usd > 0 && usd < 10_000) return { key, name, symbol, category: 'oil', priceUsd: usd, dayChange: ch, unit: 'per barrel', source: 'tgju' };
       }
       return { key, name, symbol, category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable' };
     };
-
     out['brent'] = makeOil('oil_brent', 'Brent Crude Oil (نفت برنت)', 'BRENT', 'oil_brent');
     out['wti']   = makeOil('oil_wti',   'WTI Crude Oil (نفت وست تگزاس)', 'WTI', 'oil_wti');
     out['gas']   = makeOil('gas',       'Natural Gas (گاز طبیعی)', 'GAS', 'gas');
@@ -1110,16 +897,13 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // PUBLIC: individual lookups
+  // PUBLIC LOOKUPS
   // ==========================================================================
 
   static async getOilPrice(type: 'brent' | 'wti' | 'gas' = 'brent'): Promise<AssetInfo> {
     const snap = await this.getUnifiedMarketSnapshot();
     const key = (type || 'brent').toLowerCase();
-    return snap.oil[key] || {
-      key: `oil_${key}`, name: key, symbol: key.toUpperCase(),
-      category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable',
-    };
+    return snap.oil[key] || { key: `oil_${key}`, name: key, symbol: key.toUpperCase(), category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable' };
   }
 
   static async getGoldPrice(): Promise<GoldInfo | null> {
@@ -1131,9 +915,7 @@ export class PriceService {
     const q = this.faNumToEn(query.trim().toLowerCase());
     const snap = await this.getUnifiedMarketSnapshot();
     const g = snap.gold;
-
     if (!g.gold18) return new GoldExtract('unavailable', 0, 0, 0, 0, false, 'unavailable').toGoldInfo();
-
     if (q.includes('امامی') || q.includes('emami') || q === 'seke' || q === 'سکه' || q.includes('طرح جدید')) return g.sekeEmami;
     if (q.includes('بهار') || q.includes('bahar') || q.includes('تمام') || q.includes('طرح قدیم')) return g.sekeBahar;
     if (q.includes('نیم') || q.includes('nim')) return g.sekeNim;
@@ -1159,16 +941,10 @@ export class PriceService {
     const snap = await this.getUnifiedMarketSnapshot();
 
     if (aliasKey.startsWith('oil') || clean.includes('نفت') || clean.includes('گاز')) {
-      const type: 'brent' | 'wti' | 'gas' =
-        aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti'
-        : clean.includes('گاز') ? 'gas' : 'brent';
+      const type: 'brent' | 'wti' | 'gas' = aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti' : clean.includes('گاز') ? 'gas' : 'brent';
       const oil = await this.getOilPrice(type);
       if (oil.unavailable) return { ...oil, unavailable: true };
-      return {
-        ...oil,
-        name: amount > 1 ? `${amount} ${oil.name}` : oil.name,
-        priceUsd: oil.priceUsd ? oil.priceUsd * amount : undefined,
-      };
+      return { ...oil, name: amount > 1 ? `${amount} ${oil.name}` : oil.name, priceUsd: oil.priceUsd ? oil.priceUsd * amount : undefined };
     }
 
     if (
@@ -1178,9 +954,7 @@ export class PriceService {
       clean.includes('مثقال') || clean.includes('مظنه') || clean.includes('انس')
     ) {
       const item = await this.getGoldOrCoinItem(clean);
-      if (item.unavailable) {
-        return { key: aliasKey, name: item.title, symbol: aliasKey.toUpperCase(), category: 'gold', dayChange: 0, unavailable: true };
-      }
+      if (item.unavailable) return { key: aliasKey, name: item.title, symbol: aliasKey.toUpperCase(), category: 'gold', dayChange: 0, unavailable: true };
       const usdt = snap.tether.toman || 1;
       return {
         key: aliasKey, name: amount > 1 ? `${amount} ${item.title}` : item.title,
@@ -1197,24 +971,13 @@ export class PriceService {
     if (snap.fiat[fiatKey] || snap.fiat[clean]) {
       const f = snap.fiat[fiatKey] || snap.fiat[clean];
       if (f.unavailable) return { ...f, unavailable: true };
-      return {
-        ...f,
-        name: amount > 1 ? `${amount} ${f.name}` : f.name,
-        priceToman: f.priceToman ? Math.round(f.priceToman * amount) : undefined,
-        priceUsd: f.priceUsd ? parseFloat((f.priceUsd * amount).toFixed(6)) : undefined,
-      };
+      return { ...f, name: amount > 1 ? `${amount} ${f.name}` : f.name, priceToman: f.priceToman ? Math.round(f.priceToman * amount) : undefined, priceUsd: f.priceUsd ? parseFloat((f.priceUsd * amount).toFixed(6)) : undefined };
     }
 
     const coins = snap.coins;
     const coin = coins[aliasKey] || coins[clean] || coins[fiatKey] || coins[aliasKey.toUpperCase()];
     if (coin) {
-      if (coin.unavailable) {
-        return {
-          key: aliasKey, name: coin.name || aliasKey.toUpperCase(),
-          symbol: (coin.symbol || aliasKey).toUpperCase(),
-          category: 'crypto', dayChange: 0, unavailable: true,
-        };
-      }
+      if (coin.unavailable) return { key: aliasKey, name: coin.name || aliasKey.toUpperCase(), symbol: (coin.symbol || aliasKey).toUpperCase(), category: 'crypto', dayChange: 0, unavailable: true };
       return {
         key: aliasKey,
         name: amount > 1 ? `${amount} ${coin.name || aliasKey.toUpperCase()}` : (coin.name || aliasKey.toUpperCase()),
@@ -1229,55 +992,42 @@ export class PriceService {
         lowUsd: coin.dayLowUsd ? coin.dayLowUsd * amount : undefined,
       };
     }
-
     return null;
   }
 
   static async getMarketOverviewAssets(): Promise<AssetInfo[]> {
     const snap = await this.getUnifiedMarketSnapshot();
     const list = this.dedupeCoins(snap.coins);
-
     const preferred = ['BTC', 'ETH', 'SOL', 'TON', 'LTC', 'DOGE', 'XRP', 'BNB', 'TRX'];
     const picked: AssetInfo[] = [];
     const usedSymbols = new Set<string>();
-
-    const findCoin = (sym: string): CoinInfo | undefined =>
-      list.find((c) => (c.symbol || '').toUpperCase() === sym);
+    const findCoin = (sym: string): CoinInfo | undefined => list.find((c) => (c.symbol || '').toUpperCase() === sym);
 
     for (const sym of preferred) {
       const c = findCoin(sym);
       if (c && !c.unavailable) {
-        picked.push({
-          key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto',
-          priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange,
-        });
+        picked.push({ key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto', priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange });
         usedSymbols.add(sym);
       }
     }
-
     for (const c of list) {
       if (picked.length >= 9) break;
       const sym = (c.symbol || '').toUpperCase();
       if (usedSymbols.has(sym)) continue;
-      picked.push({
-        key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto',
-        priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange,
-      });
+      picked.push({ key: sym.toLowerCase(), name: c.name || sym, symbol: sym, category: 'crypto', priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange });
       usedSymbols.add(sym);
     }
-
     for (const sym of preferred) {
       if (picked.length >= 9) break;
       if (usedSymbols.has(sym)) continue;
       picked.push({ key: sym.toLowerCase(), name: sym, symbol: sym, category: 'crypto', dayChange: 0, unavailable: true });
       usedSymbols.add(sym);
     }
-
     return picked.slice(0, 9);
   }
 
   // ==========================================================================
-  // CHARTS
+  // CHARTS — FIXED for stablecoins
   // ==========================================================================
 
   static async get7DayChartData(
@@ -1288,14 +1038,19 @@ export class PriceService {
   ): Promise<Chart7DayData> {
     const cleanSym = (symbol || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
 
+    // Stablecoins excluded — Binance has no USDTUSDT pair
+    const STABLES = ['USDT', 'USDC', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD'];
+
     const isCrypto = !(
       cleanSym.startsWith('GOLD') || cleanSym.startsWith('SEKE') || cleanSym.startsWith('SILVER') ||
       cleanSym.startsWith('OIL') || cleanSym.startsWith('BRENT') || cleanSym.startsWith('WTI') ||
       cleanSym === 'USD' || cleanSym === 'EUR' || cleanSym === 'GBP' ||
       cleanSym === 'AED' || cleanSym === 'TRY' || cleanSym === 'CNY' ||
-      cleanSym === 'ONS' || cleanSym === 'XAU'
+      cleanSym === 'ONS' || cleanSym === 'XAU' ||
+      STABLES.includes(cleanSym)
     );
 
+    // 1. Try real Binance klines
     if (isCrypto && cleanSym) {
       try {
         const r = await this.fetchJson(
@@ -1304,14 +1059,14 @@ export class PriceService {
           { retries: 1, label: `klines:${cleanSym}` }
         );
         if (Array.isArray(r.data) && r.data.length >= 20) {
-          const points = r.data.map((c: any) => parseFloat(c[4]));
-          if (points.every((p) => this.isValidNumber(p) && p > 0)) {
-            const high = Math.max(...points);
-            const low  = Math.min(...points);
-            const start = points[0];
-            const current = points[points.length - 1];
+          const pts = r.data.map((c: any) => parseFloat(c[4]));
+          if (pts.every((p) => this.isValidNumber(p) && p > 0)) {
+            const high = Math.max(...pts);
+            const low  = Math.min(...pts);
+            const start = pts[0];
+            const current = pts[pts.length - 1];
             return {
-              points, high, low,
+              points: pts, high, low,
               weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
               startPrice: start, currentPrice: current,
               source: 'binance', isSynthetic: false,
@@ -1323,11 +1078,29 @@ export class PriceService {
       }
     }
 
+    // 2. ALWAYS return valid points (even for stablecoins and non-crypto)
+    const fallbackPrice = currentPrice > 0 ? currentPrice : 1000;
+    const safeDayChange = Number.isFinite(dayChange) ? dayChange : 0;
+    const openPrice = safeDayChange !== 0 ? fallbackPrice / (1 + safeDayChange / 100) : fallbackPrice;
+
+    const N = 24;
+    const points: number[] = [];
+    for (let i = 0; i < N; i++) {
+      const p = i / (N - 1);
+      const val = openPrice + (fallbackPrice - openPrice) * p;
+      points.push(parseFloat(val.toFixed(2)));
+    }
+    points[points.length - 1] = fallbackPrice;
+
     return {
-      points: [], high: 0, low: 0,
-      weekChangePercent: dayChange,
-      startPrice: 0, currentPrice: currentPrice || 0,
-      source: 'unavailable', isSynthetic: false,
+      points,
+      high: Math.max(...points),
+      low: Math.min(...points),
+      weekChangePercent: safeDayChange,
+      startPrice: openPrice,
+      currentPrice: fallbackPrice,
+      source: 'derived',
+      isSynthetic: true,
     };
   }
 
@@ -1349,25 +1122,17 @@ export class PriceService {
         key: string, symbol: string, name: string, persianName: string,
         category: 'crypto' | 'gold' | 'fiat' | 'oil',
         priceToman: number, priceUsd: number | undefined, dayChange: number,
-        highToman?: number, lowToman?: number,
-        openUsd24h?: number
+        highToman?: number, lowToman?: number, openUsd24h?: number
       ) => {
         const safeToman = priceToman > 0 ? priceToman : 0;
         const safeUsd = priceUsd && priceUsd > 0 ? priceUsd : undefined;
         const safeHigh = highToman && highToman > 0 ? highToman : undefined;
         const safeLow  = lowToman  && lowToman  > 0 ? lowToman  : undefined;
 
-        const sparkline = this.buildRealSparkline(
-          safeToman, dayChange, safeHigh, safeLow, openUsd24h, tetherToman, 24
-        );
-
+        const sparkline = this.buildRealSparkline(safeToman, dayChange, safeHigh, safeLow, openUsd24h, tetherToman, 24);
         const hourlyTrend = sparkline.map((price, idx) => {
           const hoursAgo = 23 - idx;
-          return {
-            time: hoursAgo === 0 ? 'اکنون' : `${hoursAgo} ساعت پیش`,
-            hour: `${idx}:00`,
-            price: Math.round(price),
-          };
+          return { time: hoursAgo === 0 ? 'اکنون' : `${hoursAgo} ساعت پیش`, hour: `${idx}:00`, price: Math.round(price) };
         });
 
         return {
@@ -1377,8 +1142,7 @@ export class PriceService {
           dayChange: parseFloat((dayChange || 0).toFixed(2)),
           highToman: safeHigh ? Math.round(safeHigh) : undefined,
           lowToman: safeLow ? Math.round(safeLow) : undefined,
-          sparkline,
-          hourlyTrend,
+          sparkline, hourlyTrend,
         };
       };
 
@@ -1392,23 +1156,15 @@ export class PriceService {
         makeItem('usdt', 'USDT', 'Tether', 'تتر دیجیتال', 'crypto', tetherToman, 1.0, snap.tether.dayChange, snap.tether.highToman, snap.tether.lowToman, undefined),
         makeItem('gold18', 'GOLD', 'Gold 18k', 'طلای ۱۸ عیار', 'gold', snap.gold.gold18?.tomanPrice || 0, snap.gold.gold18 && snap.gold.gold18.tomanPrice > 0 && tetherToman > 0 ? snap.gold.gold18.tomanPrice / tetherToman : undefined, snap.gold.gold18?.dayChangePercent || 0, snap.gold.gold18?.highToman, snap.gold.gold18?.lowToman, undefined),
         makeItem('seke_emami', 'SEKE', 'Seke Emami', 'سکه امامی', 'gold', snap.gold.sekeEmami?.tomanPrice || 0, snap.gold.sekeEmami && snap.gold.sekeEmami.tomanPrice > 0 && tetherToman > 0 ? snap.gold.sekeEmami.tomanPrice / tetherToman : undefined, snap.gold.sekeEmami?.dayChangePercent || 0, snap.gold.sekeEmami?.highToman, snap.gold.sekeEmami?.lowToman, undefined),
-        btc && !btc.unavailable
-          ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman, btc.openPrice24h)
-          : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
-        eth && !eth.unavailable
-          ? makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', eth.irr, eth.usdt, eth.dayChange, eth.dayHighToman, eth.dayLowToman, eth.openPrice24h)
-          : makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
+        btc && !btc.unavailable ? makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', btc.irr, btc.usdt, btc.dayChange, btc.dayHighToman, btc.dayLowToman, btc.openPrice24h) : makeItem('btc', 'BTC', 'Bitcoin', 'بیت کوین', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
+        eth && !eth.unavailable ? makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', eth.irr, eth.usdt, eth.dayChange, eth.dayHighToman, eth.dayLowToman, eth.openPrice24h) : makeItem('eth', 'ETH', 'Ethereum', 'اتریوم', 'crypto', 0, undefined, 0, undefined, undefined, undefined),
       ];
 
       const allCoins = this.dedupeCoins(coinsMap);
       const crypto = allCoins.map((coin) => {
         const sym = (coin.symbol || '').toUpperCase();
         const persianName = PERSIAN_NAMES[sym] || coin.name || sym;
-        return makeItem(
-          sym.toLowerCase(), sym, coin.name || sym, persianName, 'crypto',
-          sym === 'USDT' ? tetherToman : coin.irr,
-          coin.usdt, coin.dayChange, coin.dayHighToman, coin.dayLowToman, coin.openPrice24h
-        );
+        return makeItem(sym.toLowerCase(), sym, coin.name || sym, persianName, 'crypto', sym === 'USDT' ? tetherToman : coin.irr, coin.usdt, coin.dayChange, coin.dayHighToman, coin.dayLowToman, coin.openPrice24h);
       });
 
       const gold = [
@@ -1437,36 +1193,16 @@ export class PriceService {
         makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0, undefined, undefined, undefined),
       ];
 
-      return {
-        highlights, crypto, gold, fiat, oil,
-        serverTime: snap.serverTime,
-        totalCryptoCount: crypto.length,
-      };
+      return { highlights, crypto, gold, fiat, oil, serverTime: snap.serverTime, totalCryptoCount: crypto.length };
     } catch (e: any) {
       console.error('[PriceService] getMiniAppData failed:', e?.message || e);
       return { highlights: [], crypto: [], gold: [], fiat: [], oil: [], serverTime: new Date().toISOString(), totalCryptoCount: 0 };
     }
   }
 
-  // ==========================================================================
-  // REAL SPARKLINE
-  // ==========================================================================
-
-  private static buildRealSparkline(
-    currentToman: number,
-    dayChangePct: number,
-    highToman: number | undefined,
-    lowToman: number | undefined,
-    openUsd24h: number | undefined,
-    tetherToman: number,
-    length: number = 24
-  ): number[] {
+  private static buildRealSparkline(currentToman: number, dayChangePct: number, highToman: number | undefined, lowToman: number | undefined, openUsd24h: number | undefined, tetherToman: number, length: number = 24): number[] {
     if (!this.isValidNumber(currentToman) || currentToman <= 0) return [];
-
-    const openPriceToman = openUsd24h && tetherToman > 0
-      ? openUsd24h * tetherToman
-      : (dayChangePct !== 0 ? currentToman / (1 + dayChangePct / 100) : null);
-
+    const openPriceToman = openUsd24h && tetherToman > 0 ? openUsd24h * tetherToman : (dayChangePct !== 0 ? currentToman / (1 + dayChangePct / 100) : null);
     if (!openPriceToman || openPriceToman <= 0) return [];
 
     const boundHigh = highToman && highToman > 0 ? highToman : Math.max(openPriceToman, currentToman);
@@ -1476,7 +1212,6 @@ export class PriceService {
 
     const points: number[] = [];
     const seed = currentToman % 1000;
-
     for (let i = 0; i < length; i++) {
       const progress = i / (length - 1);
       const linear = openPriceToman + (currentToman - openPriceToman) * progress;
@@ -1488,20 +1223,14 @@ export class PriceService {
       if (i === length - 1) val = currentToman;
       points.push(Math.round(val));
     }
-
     return points;
   }
-
-  // ==========================================================================
-  // PARSING
-  // ==========================================================================
 
   static parseNaturalQuery(raw: string): {
     cleanKey: string; amount: number; isQuestion: boolean;
     isOverviewRequest: boolean; isMiniAppRequest: boolean; isGreetingOrHelp: boolean;
   } {
     if (!raw) return { cleanKey: '', amount: 1, isQuestion: false, isOverviewRequest: false, isMiniAppRequest: false, isGreetingOrHelp: false };
-
     let text = this.faNumToEn(raw.trim().toLowerCase());
     text = text.replace(/@[a-z0-9_]+/gi, '').trim();
 
@@ -1511,20 +1240,16 @@ export class PriceService {
     text = text.replace(/[\u066b]/g, '.');
     text = text.replace(/[\u200c\u200b\u00a0]+/g, ' ');
     text = text.replace(/[؟?!؛:،,]+/g, ' ').replace(/[.!?]+$/g, '').trim();
-
     if (text.startsWith('/')) text = text.substring(1).trim();
     text = text.replace(/^(?:p|c|arz|qeymat|price)\s+/gi, '').trim();
 
     const overviewKeywords = ['بازار', 'ارزها', 'ارز', 'لیست', 'کریپتو', 'مارکت', 'market', 'گزارش', 'تابلو', 'قیمت‌ها', 'قیمتها'];
     const isOverview = overviewKeywords.some((k) => text === k || text === `گزارش ${k}`);
-
     const isMiniApp = /^(?:مینی\s*اپ|مینی‌اپ|miniapp|mini\s*app|اپ|اپلیکیشن|برنامه)$/i.test(text);
 
     const starterRegex = /^(?:سلام\s+علیکم|سلام|درود|وقت\s+بخیر|صبح\s+بخیر|عصر\s+بخیر|داداش|عزیز|لطفا|لطفاً|بگو|میشه)\s+/gi;
     let loopGuard = 0;
-    while (starterRegex.test(text) && loopGuard++ < 5) {
-      text = text.replace(starterRegex, '').trim();
-    }
+    while (starterRegex.test(text) && loopGuard++ < 5) text = text.replace(starterRegex, '').trim();
 
     text = text.replace(/^(?:قیمت\s+لحظه\s*ای|قیمت\s+لحظه‌ای|قیمت|نرخ|استعلام|ارزش)\s+/gi, '').trim();
     text = text.replace(/\s+(?:چند\s+تومن|چند\s+تومان|چند\s+دلار|چقدر|چنده|چند\s+است|چند\s+شده|هست)$/gi, '').trim();
@@ -1533,16 +1258,8 @@ export class PriceService {
 
     let amount = 1;
     const numMatch = text.match(/^(\d+(?:\.\d+)?)\s*(?:تا|عدد|گرم|گرمی|مثقال|واحد|دانه)?\s*(.+)$/);
-    if (numMatch && !text.includes('نیم') && !text.includes('ربع')) {
-      amount = parseFloat(numMatch[1]) || 1;
-      text = numMatch[2].trim();
-    } else {
-      const endMatch = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/);
-      if (endMatch) {
-        amount = parseFloat(endMatch[2]) || 1;
-        text = endMatch[1].trim();
-      }
-    }
+    if (numMatch && !text.includes('نیم') && !text.includes('ربع')) { amount = parseFloat(numMatch[1]) || 1; text = numMatch[2].trim(); }
+    else { const endMatch = text.match(/^(.+?)\s+(\d+(?:\.\d+)?)$/); if (endMatch) { amount = parseFloat(endMatch[2]) || 1; text = endMatch[1].trim(); } }
 
     text = text.replace(/^(?:قیمت|نرخ)\s+/gi, '').trim();
     text = text.replace(/\s+(?:گرمی|گرم)$/gi, '').trim();
@@ -1563,10 +1280,7 @@ export class PriceService {
     const ar = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
     const en = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
     let result = String(text);
-    for (let i = 0; i < 10; i++) {
-      result = result.replaceAll(fa[i], en[i]);
-      result = result.replaceAll(ar[i], en[i]);
-    }
+    for (let i = 0; i < 10; i++) { result = result.replaceAll(fa[i], en[i]); result = result.replaceAll(ar[i], en[i]); }
     return result;
   }
 
@@ -1592,10 +1306,6 @@ export class PriceService {
   }
 }
 
-// ============================================================================
-// INTERNAL HELPER
-// ============================================================================
-
 class GoldExtract {
   constructor(
     public title: string,
@@ -1608,12 +1318,7 @@ class GoldExtract {
   ) {}
 
   set(toman: number, high: number, low: number, change: number, isLive: boolean, source: string): void {
-    this._tomanPrice = toman;
-    this._high = high;
-    this._low = low;
-    this._change = change;
-    this.isLive = isLive;
-    this.source = source;
+    this._tomanPrice = toman; this._high = high; this._low = low; this._change = change; this.isLive = isLive; this.source = source;
   }
 
   toGoldInfo(): GoldInfo {
