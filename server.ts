@@ -824,4 +824,157 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
     const result = BotStorage.updateEnvCredentials(updates);
     if (!result.ok) return res.status(500).json({ ok: false, message: `خطا در ذخیره‌سازی: ${result.message}` });
 
-    BotStorage.addLog({ type: 'system', text: `تنظیمات ورود ربات از پنل به‌روزرسانی شد: ${Object.keys(updates).join(', ')}`,
+    BotStorage.addLog({ type: 'system', text: `تنظیمات ورود ربات از پنل به‌روزرسانی شد: ${Object.keys(updates).join(', ')}`, status: 'success' });
+    BotStorage.restartServiceSoon(800);
+
+    return res.json({ ok: true, saved: Object.keys(updates), message: '✅ ذخیره شد. سرور در حدود ۱ ثانیه دیگر ری‌استارت می‌شود.' });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, message: e?.message || 'خطای غیرمنتظره' });
+  }
+});
+
+// REST API
+app.get('/api/prices', async (req: Request, res: Response) => {
+  try {
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    return res.json({
+      ok: true, status: 'online', provider: 'MODASR_ARZ_API_GATEWAY_1',
+      goldPriceToman: snapshot.gold.gold18?.tomanPrice || 0,
+      goldDayChange: snapshot.gold.gold18?.dayChangePercent || 0,
+      tether: snapshot.tether, dollar: snapshot.dollar,
+      coins: snapshot.coins, gold: snapshot.gold,
+      oilPrice: snapshot.oil.brent, timestamp: snapshot.serverTime,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.get('/api/rates', async (req: Request, res: Response) => {
+  try {
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    const coins = snapshot.coins;
+    return res.json({
+      ok: true, status: 'online', provider: 'MODASR_ARZ_API_GATEWAY_2',
+      rates: {
+        dollar: { name: 'US Dollar (دلار آمریکا)', symbol: 'USD', category: 'fiat', priceToman: snapshot.dollar.toman, priceUsd: 1.0, dayChange: snapshot.dollar.dayChange, highToman: snapshot.dollar.highToman, lowToman: snapshot.dollar.lowToman },
+        gold18k: snapshot.gold.gold18,
+        tether: coins['usdt'] || { name: 'تتر دیجیتال', symbol: 'USDT', usdt: 1.0, irr: snapshot.tether.toman, dayChange: snapshot.tether.dayChange },
+        bitcoin: coins['btc'] || coins['BTC'],
+        ethereum: coins['eth'] || coins['ETH'],
+        toncoin: coins['ton'] || coins['TON'],
+        solana: coins['sol'] || coins['SOL'],
+      },
+      allCoinsCount: Object.keys(coins).length, timestamp: snapshot.serverTime,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.all('/api/bot/response', async (req: Request, res: Response) => {
+  try {
+    const query = String(req.query.q || req.query.text || req.body?.q || req.body?.text || req.body?.query || '').trim();
+    if (!query) return res.json({ ok: true, status: 'online', service: 'Mini-App Response & Bot Query Engine (API 2)', description: 'وب‌سرویس پاسخگویی و استعلام هوشمند قیمت‌ها برای مینی‌اپ', usage: 'GET or POST /api/bot/response?q=بیتکوین or ?q=طلا', timestamp: Date.now() });
+    const parsed = PriceService.parseNaturalQuery(query);
+    const asset = await PriceService.resolveAnyAsset(parsed.cleanKey || query);
+    if (asset) return res.json({ ok: true, query, found: true, asset, answerText: `نرخ لحظه‌ای ${asset.name}: ${asset.priceToman ? asset.priceToman.toLocaleString('fa-IR') + ' تومان' : ''} ${asset.priceUsd ? `($${asset.priceUsd})` : ''} | تغییر ۲۴ساعته: ${asset.dayChange}%`, timestamp: Date.now() });
+    const gold = await PriceService.getGoldPrice();
+    return res.json({ ok: true, query, found: false, message: 'استعلام دریافت شد.', summary: { gold18k: gold?.tomanPrice }, timestamp: Date.now() });
+  } catch (err: any) {
+    return res.status(500).json({ ok: false, error: err.message });
+  }
+});
+
+app.get('/api/bot/prices', async (req: Request, res: Response) => {
+  try {
+    const snapshot = await PriceService.getUnifiedMarketSnapshot();
+    const gold18 = snapshot.gold.gold18;
+    return res.json({
+      ok: true,
+      goldPriceRials: (gold18?.tomanPrice || 0) * 10,
+      goldPriceToman: gold18?.tomanPrice || 0,
+      goldDayChange: gold18?.dayChangePercent || 0,
+      goldHighToman: gold18?.highToman || 0,
+      goldLowToman: gold18?.lowToman || 0,
+      oilPrice: snapshot.oil.brent, coins: snapshot.coins, tether: snapshot.tether,
+      dollar: snapshot.dollar, gold: snapshot.gold, fiat: snapshot.fiat, oil: snapshot.oil,
+      timestamp: snapshot.serverTime,
+    });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+app.post('/api/bot/simulate', async (req: Request, res: Response) => {
+  try {
+    const { text, fromId, chatId, isGroup, chatType } = req.body;
+    if (!text) return res.status(400).json({ ok: false, error: 'Text is required' });
+    const effectiveFromId = fromId ? parseInt(fromId, 10) : (BOT_CONFIG.adminId || 999999999);
+    const effectiveChatId = chatId ? parseInt(chatId, 10) : effectiveFromId;
+    const fakeUpdate: TelegramUpdate = {
+      update_id: Math.floor(Math.random() * 100000),
+      message: {
+        message_id: Math.floor(Math.random() * 10000),
+        from: { id: effectiveFromId, is_bot: false, first_name: 'تستر داشبورد', username: 'dashboard_tester' },
+        chat: { id: effectiveChatId, type: (chatType || (isGroup ? 'group' : 'private')) as any, title: isGroup ? 'گروه تستی' : undefined, first_name: 'تستر داشبورد' },
+        date: Math.floor(Date.now() / 1000),
+        text: text,
+      },
+    };
+    const result = await TelegramService.handleUpdate(fakeUpdate);
+    let cardUrl: string | undefined = undefined;
+    try {
+      const parsed = PriceService.parseNaturalQuery(text);
+      if (parsed.isOverviewRequest || text.includes('بازار') || text.includes('market') || text.includes('overview') || text.includes('گزارش')) {
+        cardUrl = `/api/bot/grid-preview?t=${Date.now()}`;
+      } else {
+        const asset = await PriceService.resolveAnyAsset(parsed.cleanKey || text);
+        if (asset) cardUrl = `/api/bot/card-preview?symbol=${encodeURIComponent(asset.symbol)}&t=${Date.now()}`;
+      }
+    } catch { /* ignore */ }
+    return res.json({ ok: true, update: fakeUpdate, result, cardUrl });
+  } catch (error: any) {
+    return res.status(500).json({ ok: false, error: error.message });
+  }
+});
+
+// Vite
+async function startServer() {
+  const isProduction = process.env.NODE_ENV === 'production';
+  if (!isProduction) {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({ server: { middlewareMode: true, hmr: false }, appType: 'spa' });
+    app.use(vite.middlewares);
+  } else {
+    const distPath = path.resolve(process.cwd(), 'dist');
+    if (fs.existsSync(distPath)) {
+      app.use(express.static(distPath));
+      app.get('*', (req, res) => { res.sendFile(path.join(distPath, 'index.html')); });
+    }
+  }
+
+  const server = app.listen(PORT, '0.0.0.0', async () => {
+    console.log(`🚀 Telegram Bot Server running on http://0.0.0.0:${PORT}`);
+    try { await PollingService.start(BOT_CONFIG.token); } catch (e) { console.warn('Polling start notice:', e); }
+    try { ChannelPostService.startScheduler(); } catch (e) { console.warn('ChannelPost scheduler notice:', e); }
+    try { PriceService.startLiveTicker(); } catch (e) { console.warn('PriceService ticker notice:', e); }
+    try {
+      TunnelService.startTunnel().then((url) => {
+        console.log(`🌐 Public Tunnel active for Telegram Mini App: ${url}/mini-modasr-arz`);
+      }).catch((e) => { console.warn('TunnelService startup notice:', e); });
+    } catch (e) { console.warn('TunnelService init notice:', e); }
+  });
+
+  const cleanup = () => {
+    console.log('🛑 Gracefully stopping...');
+    PollingService.stop();
+    ChannelPostService.stopScheduler();
+    PriceService.stopLiveTicker();
+    server.close();
+  };
+  process.on('SIGTERM', cleanup);
+  process.on('SIGINT', cleanup);
+}
+
+startServer();
