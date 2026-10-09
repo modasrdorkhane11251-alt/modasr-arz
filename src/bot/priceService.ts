@@ -5,18 +5,24 @@ import { MANUAL_ALIASES } from './config';
 // PRICE SERVICE — Production-grade market data pipeline
 // ============================================================================
 //
-// Verified units (from legacy PHP code):
-//   - FastCreat crypto `irr` = TOMAN directly (NOT Rial, despite name)
-//   - FastCreat gold `price[0]` = RIAL (divide by 10)
-//   - TGJU gold/dollar `p` = RIAL (divide by 10)
-//   - Binance `price` = USD
+// Data sources & units:
+//   - FastCreat Nobitex  → crypto + tether   (irr = TOMAN, usdt = USD)
+//   - TGJU               → dollar + gold      (p = RIAL → divide by 10)
+//   - Binance            → fallback for missing crypto (USD)
+//
+// Design principles:
+//   1. USD (free-market) and USDT (tether) are INDEPENDENT
+//   2. No hardcoded fallback is presented as a live price
+//   3. Provider errors are logged; health is tracked
+//   4. Stale data is explicitly marked
 // ============================================================================
 
 const RIALS_PER_TOMAN = 10;
 const CACHE_TTL_MS = 5_000;
 const LIVE_TICKER_INTERVAL_MS = 15_000;
-const FETCH_TIMEOUT_MS = 3_500;
+const FETCH_TIMEOUT_MS = 4_000;
 const STALE_THRESHOLD_MS = 5 * 60_000;
+const TGJU_URL = 'https://call.tgju.org/ajax.json';
 
 // ============================================================================
 // PUBLIC INTERFACES
@@ -169,7 +175,7 @@ export class PriceService {
   }
 
   // ---------------------------------------------------------------------------
-  // Provider health tracking
+  // Provider health
   // ---------------------------------------------------------------------------
 
   private static markProviderSuccess(name: string): void {
@@ -237,6 +243,7 @@ export class PriceService {
         headers: {
           'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
           'Accept': 'application/json, text/plain, */*',
+          'Referer': 'https://www.tgju.org/',
         },
       }).catch((err) => {
         clearTimeout(timer);
@@ -304,36 +311,43 @@ export class PriceService {
     const goldUrl = hubConfig?.priceBoard?.goldApiUrl || '';
     const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
 
-    // Fetch gold (FastCreat) and crypto (FastCreat Nobitex) in parallel
-    const [goldRes, cryptoRes] = await Promise.all([
+    // ---- Fetch all providers in parallel ----
+    // TGJU is the primary source for dollar + gold (Rials)
+    // FastCreat is the source for crypto + tether (Toman)
+    const [goldRes, cryptoRes, tgjuRes] = await Promise.all([
       goldUrl ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
       cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
+      this.fetchJson(TGJU_URL, FETCH_TIMEOUT_MS),
     ]);
 
     if (goldRes.data) this.markProviderSuccess('gold'); else this.markProviderFailure('gold', goldRes.error || 'unknown');
     if (cryptoRes.data) this.markProviderSuccess('crypto'); else this.markProviderFailure('crypto', cryptoRes.error || 'unknown');
+    if (tgjuRes.data) this.markProviderSuccess('tgju'); else this.markProviderFailure('tgju', tgjuRes.error || 'unknown');
 
     if (!goldRes.data) errors.push(`gold: ${goldRes.error}`);
     if (!cryptoRes.data) errors.push(`crypto: ${cryptoRes.error}`);
+    if (!tgjuRes.data) errors.push(`tgju: ${tgjuRes.error}`);
 
-    // ---- Extract from FastCreat ----
+    // ---- Extract ----
     const tetherData = this.extractTether(cryptoRes.data);
     if (!tetherData.isLive) unavailable.push('usdt');
 
-    const dollarData = this.extractDollar(goldRes.data);
+    // Dollar comes from TGJU (independent from tether)
+    const dollarData = this.extractDollar(tgjuRes.data);
     if (!dollarData.isLive) unavailable.push('usd');
 
-    const goldBundle = this.extractGold(goldRes.data);
+    // Gold comes from TGJU (primary) with FastCreat as fallback inside extractor
+    const goldBundle = this.extractGold(tgjuRes.data, goldRes.data);
     if (!goldBundle.gold18.isLive) unavailable.push('gold18');
     if (!goldBundle.sekeEmami.isLive) unavailable.push('sekeEmami');
 
     const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
 
-    // ---- Binance fallback for missing cryptos ----
+    // Binance fallback for missing cryptos
     await this.enrichFromBinance(coins, tetherData.toman);
 
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
-    const oil = this.extractOil(goldRes.data);
+    const oil = this.extractOil(tgjuRes.data);
 
     // ---- Build snapshot ----
     const nowIso = new Date().toISOString();
@@ -419,7 +433,7 @@ export class PriceService {
 
   /**
    * Tether (USDT) from FastCreat Nobitex.
-   * FastCreat's `irr` field is ALREADY in Toman.
+   * FastCreat's `irr` field is ALREADY in Toman (verified from legacy PHP).
    */
   private static extractTether(cryptoData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
@@ -427,7 +441,7 @@ export class PriceService {
   } {
     const result = cryptoData?.result;
 
-    // FastCreat format: { result: { USDT: { irr: 267999, usdt: 1, dayChange: 1.2 } } }
+    // FastCreat: { result: { USDT: { irr: 267999, usdt: 1, dayChange: 1.2 } } }
     const usdt = result?.USDT || result?.usdt;
     if (usdt?.irr) {
       const pToman = parseFloat(String(usdt.irr));
@@ -463,14 +477,15 @@ export class PriceService {
   }
 
   /**
-   * Dollar from TGJU (independent from tether).
+   * Dollar (USD/IRR free-market) from TGJU.
    * TGJU `p` values are RIAL → divide by 10.
+   * Field: price_dollar_rl (free-market dollar)
    */
-  private static extractDollar(goldData: any): {
+  private static extractDollar(tgjuData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
-    const current = goldData?.current || goldData?.data?.current;
+    const current = tgjuData?.current || tgjuData?.data?.current;
     const field = current?.price_dollar_rl;
 
     if (field?.p) {
@@ -493,9 +508,10 @@ export class PriceService {
   }
 
   /**
-   * Gold from FastCreat (Rials) or TGJU (Rials).
+   * Gold & coins — primary from TGJU, fallback from FastCreat.
+   * Both sources store values in RIAL.
    */
-  private static extractGold(goldData: any): {
+  private static extractGold(tgjuData: any, fastcreatData: any): {
     gold18: GoldExtract; gold24: GoldExtract; mesghal: GoldExtract;
     sekeEmami: GoldExtract; sekeBahar: GoldExtract; sekeNim: GoldExtract;
     sekeRob: GoldExtract; sekeGerami: GoldExtract; silver: GoldExtract; ons: GoldExtract;
@@ -513,48 +529,8 @@ export class PriceService {
     const silv = empty('نقره ۹۹۹');
     const ons  = empty('انس جهانی طلا');
 
-    // FastCreat gold array
-    const arr = goldData?.result;
-    if (Array.isArray(arr)) {
-      for (const item of arr) {
-        if (!item?.title) continue;
-        const title = String(item.title);
-        const pRials = parseInt(String(item.price?.[0] || '0').replace(/[^0-9]/g, ''), 10);
-        if (!pRials) continue;
-        const pToman = Math.round(pRials / RIALS_PER_TOMAN);
-
-        const chMatch = String(item.price?.[1] || '').match(/\(([+-]?\d+(?:\.\d+)?)%\)/);
-        const ch = chMatch ? parseFloat(chMatch[1]) : 0;
-
-        const highR = parseInt(String(item.highest || '0').replace(/[^0-9]/g, ''), 10);
-        const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
-        const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
-        const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
-
-        if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(pToman)) {
-          g18.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
-          g24.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('مثقال')) {
-          mes.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('امامی')) {
-          skE.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('بهار')) {
-          skB.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('نیم')) {
-          skN.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('ربع')) {
-          skR.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('گرمی')) {
-          skG.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('نقره')) {
-          silv.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        }
-      }
-    }
-
-    // TGJU fallback
-    const current = goldData?.current || goldData?.data?.current;
+    // ---------- 1. TGJU (primary, values in RIAL) ----------
+    const current = tgjuData?.current || tgjuData?.data?.current;
     if (current) {
       const tg = (key: string, target: GoldExtract) => {
         const f = current[key];
@@ -565,6 +541,8 @@ export class PriceService {
         const ch = parseFloat(String(f.dp || f.d || '0')) || 0;
         if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
       };
+
+      // TGJU field names
       tg('geram18', g18);
       tg('geram24', g24);
       tg('mesghal', mes);
@@ -575,13 +553,56 @@ export class PriceService {
       tg('gerami', skG);
       tg('silver', silv);
 
-      // ONS is in USD on TGJU
+      // ONS is in USD on TGJU (different unit)
       const onsField = current['ons'];
       if (onsField?.p) {
         const usdPrice = this.parseNumberFromRaw(onsField.p);
-        if (usdPrice > 100) {
+        if (usdPrice > 100 && usdPrice < 10_000) {
           const ch = parseFloat(String(onsField.dp || onsField.d || '0')) || 0;
           ons.set(Math.round(usdPrice), 0, 0, ch, true, 'tgju');
+        }
+      }
+    }
+
+    // ---------- 2. FastCreat (fallback for anything still missing) ----------
+    const arr = fastcreatData?.result;
+    if (Array.isArray(arr)) {
+      const trySet = (target: GoldExtract, title: string, pRials: number, highR: number, lowR: number, ch: number) => {
+        if (target.isLive) return; // don't overwrite TGJU data
+        const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+        const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
+        const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
+        if (pToman > 0) target.set(pToman, highT, lowT, ch, true, 'fast_creat');
+      };
+
+      for (const item of arr) {
+        if (!item?.title) continue;
+        const title = String(item.title);
+        const pRials = parseInt(String(item.price?.[0] || '0').replace(/[^0-9]/g, ''), 10);
+        if (!pRials) continue;
+        const chMatch = String(item.price?.[1] || '').match(/\(([+-]?\d+(?:\.\d+)?)%\)/);
+        const ch = chMatch ? parseFloat(chMatch[1]) : 0;
+        const highR = parseInt(String(item.highest || '0').replace(/[^0-9]/g, ''), 10);
+        const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
+
+        if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(Math.round(pRials / RIALS_PER_TOMAN))) {
+          trySet(g18, title, pRials, highR, lowR, ch);
+        } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
+          trySet(g24, title, pRials, highR, lowR, ch);
+        } else if (title.includes('مثقال')) {
+          trySet(mes, title, pRials, highR, lowR, ch);
+        } else if (title.includes('امامی')) {
+          trySet(skE, title, pRials, highR, lowR, ch);
+        } else if (title.includes('بهار')) {
+          trySet(skB, title, pRials, highR, lowR, ch);
+        } else if (title.includes('نیم')) {
+          trySet(skN, title, pRials, highR, lowR, ch);
+        } else if (title.includes('ربع')) {
+          trySet(skR, title, pRials, highR, lowR, ch);
+        } else if (title.includes('گرمی')) {
+          trySet(skG, title, pRials, highR, lowR, ch);
+        } else if (title.includes('نقره')) {
+          trySet(silv, title, pRials, highR, lowR, ch);
         }
       }
     }
@@ -595,7 +616,7 @@ export class PriceService {
 
   /**
    * Coins from FastCreat Nobitex.
-   * FastCreat `irr` is TOMAN (confirmed from legacy PHP).
+   * FastCreat `irr` is TOMAN (verified from legacy PHP code).
    */
   private static extractCoins(
     cryptoData: any,
@@ -660,13 +681,13 @@ export class PriceService {
   }
 
   /**
-   * Binance fallback: fetch USD prices for missing cryptos.
+   * Binance fallback for cryptos that FastCreat didn't return.
    */
   private static async enrichFromBinance(
     coins: Record<string, CoinInfo>,
     tetherToman: number
   ): Promise<void> {
-    const wanted = ['btc', 'eth', 'sol', 'ton', 'doge', 'xrp', 'bnb', 'ltc', 'trx', 'ada', 'shib', 'avax', 'link', 'near'];
+    const wanted = ['btc', 'eth', 'sol', 'ton', 'doge', 'xrp', 'bnb', 'ltc', 'trx', 'ada', 'shib', 'avax', 'link', 'near', 'not', 'pepe', 'sui'];
     const missing = wanted.filter((k) => !coins[k] || coins[k].unavailable || coins[k].irr === 0);
 
     if (missing.length === 0) return;
@@ -691,14 +712,10 @@ export class PriceService {
         irr: toman,
         dayChange: 0,
         source: 'binance',
-        isDerived: true, // toman value is derived from tether rate
+        isDerived: true,
       };
       coins[sym] = coin;
       coins[sym.toLowerCase()] = coin;
-    }
-
-    if (missing.length > 0) {
-      console.log(`[PriceService] Binance fallback filled ${results.filter((r) => r.price).length}/${missing.length} missing cryptos`);
     }
   }
 
@@ -738,8 +755,8 @@ export class PriceService {
     return out;
   }
 
-  private static extractOil(goldData: any): Record<string, AssetInfo> {
-    const current = goldData?.current || goldData?.data?.current;
+  private static extractOil(tgjuData: any): Record<string, AssetInfo> {
+    const current = tgjuData?.current || tgjuData?.data?.current;
     const out: Record<string, AssetInfo> = {};
 
     const makeOil = (key: string, name: string, symbol: string, fieldKey: string): AssetInfo => {
@@ -1001,7 +1018,7 @@ export class PriceService {
       ) => {
         const safeToman = priceToman > 0 ? priceToman : 0;
         const safeUsd = priceUsd && priceUsd > 0 ? priceUsd : undefined;
-        const sparkline = this.generateSparklinePoints(safeToman || (safeUsd ? safeUsd * dollarToman : 1), dayChange, 24);
+        const sparkline = this.generateSparklinePoints(safeToman || (safeUsd ? safeUsd * (dollarToman || 1) : 1), dayChange, 24);
         const hourlyTrend = sparkline.map((price, idx) => {
           const hoursAgo = 23 - idx;
           return {
