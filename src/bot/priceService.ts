@@ -5,27 +5,18 @@ import { MANUAL_ALIASES } from './config';
 // PRICE SERVICE — Production-grade market data pipeline
 // ============================================================================
 //
-// Design principles:
-//   1. Single authoritative snapshot for all consumers (bot, miniapp, REST, channel)
-//   2. Every price has an explicit currency unit (IRR, TOMAN, USD, USDT, gram, ...)
-//   3. No hardcoded fallback is EVER presented as a live price
-//   4. Provider errors are logged, tracked, and surfaced via metadata
-//   5. Stale data is explicitly marked; unavailable data returns unavailable state
-//   6. USD free-market rate and USDT are independent assets
-//
-// Unit conventions (internal storage):
-//   - All Toman prices are stored as integers (rounded)
-//   - All USD prices are stored as floats
-//   - TGJU returns RIAL → we divide by 10 exactly once (RIALS_PER_TOMAN)
-//   - Nobitex returns RIAL for *-rls pairs → divide by 10
-//   - Wallex returns TOMAN for *TMN pairs → use as-is
+// Unit conventions (VERIFIED from legacy PHP code):
+//   - FastCreat crypto  `irr` field  = TOMAN directly (no division)
+//   - FastCreat gold    `price[0]`   = RIAL  (divide by 10)
+//   - TGJU              `p` field    = RIAL  (divide by 10)
+//   - Nobitex `*-rls`   `latest`     = RIAL  (divide by 10)
 // ============================================================================
 
 const RIALS_PER_TOMAN = 10;
-const CACHE_TTL_MS = 5_000;              // How long a snapshot is considered fresh
-const LIVE_TICKER_INTERVAL_MS = 15_000;  // Background refresh interval (was 1.5s — too aggressive)
+const CACHE_TTL_MS = 5_000;
+const LIVE_TICKER_INTERVAL_MS = 15_000;
 const FETCH_TIMEOUT_MS = 3_500;
-const STALE_THRESHOLD_MS = 5 * 60_000;   // After 5 min without refresh, data is stale
+const STALE_THRESHOLD_MS = 5 * 60_000;
 
 // ============================================================================
 // PUBLIC INTERFACES
@@ -34,17 +25,17 @@ const STALE_THRESHOLD_MS = 5 * 60_000;   // After 5 min without refresh, data is
 export interface CoinInfo {
   name?: string;
   symbol?: string;
-  usdt: number;             // USD price of 1 unit
-  irr: number;              // Toman price of 1 unit
-  dayChange: number;        // percent, e.g. 1.25 = +1.25%
+  usdt: number;
+  irr: number;
+  dayChange: number;
   dayHighToman?: number;
   dayLowToman?: number;
   dayHighUsd?: number;
   dayLowUsd?: number;
   chartUrl?: string;
   isStale?: boolean;
-  isDerived?: boolean;      // true if computed (e.g. toman = usd * tether), not sourced directly
-  unavailable?: boolean;    // true if no reliable source returned data
+  isDerived?: boolean;
+  unavailable?: boolean;
   source?: string;
 }
 
@@ -68,9 +59,7 @@ export interface Chart7DayData {
   weekChangePercent: number;
   startPrice: number;
   currentPrice: number;
-  /** Where the series came from: 'binance' (real) or 'derived' (synthetic, shown only as a hint) */
   source?: 'binance' | 'derived' | 'unavailable';
-  /** true if points were synthesised. Frontend must not present as real history. */
   isSynthetic?: boolean;
 }
 
@@ -90,7 +79,7 @@ export interface AssetInfo {
   isStale?: boolean;
   isDerived?: boolean;
   unavailable?: boolean;
-  source?: string;          // ← NEW: which provider supplied this value (nobitex, wallex, tgju, …)
+  source?: string;
 }
 
 export interface ProviderHealth {
@@ -105,11 +94,11 @@ export interface ProviderHealth {
 }
 
 export interface SnapshotMetadata {
-  fetchedAt: number;        // when this snapshot object was built
-  generatedAt: number;      // alias for fetchedAt (kept for compat with earlier drafts)
-  isLive: boolean;          // at least one primary provider returned fresh data
-  isStale: boolean;         // serving a cached snapshot older than STALE_THRESHOLD_MS
-  ageMs: number;            // how old the underlying data is
+  fetchedAt: number;
+  generatedAt: number;
+  isLive: boolean;
+  isStale: boolean;
+  ageMs: number;
   unavailableAssets: string[];
   providers: Record<string, {
     status: 'healthy' | 'degraded' | 'unavailable';
@@ -125,24 +114,14 @@ export interface UnifiedMarketSnapshot {
   persianTime: string;
   metadata: SnapshotMetadata;
   tether: {
-    toman: number;
-    usd: number;
-    dayChange: number;
-    highToman: number;
-    lowToman: number;
-    source: string;
-    isStale?: boolean;
-    unavailable?: boolean;
+    toman: number; usd: number; dayChange: number;
+    highToman: number; lowToman: number; source: string;
+    isStale?: boolean; unavailable?: boolean;
   };
   dollar: {
-    toman: number;
-    usd: number;
-    dayChange: number;
-    highToman: number;
-    lowToman: number;
-    source: string;
-    isStale?: boolean;
-    unavailable?: boolean;
+    toman: number; usd: number; dayChange: number;
+    highToman: number; lowToman: number; source: string;
+    isStale?: boolean; unavailable?: boolean;
   };
   gold: Record<string, GoldInfo>;
   oil: Record<string, AssetInfo>;
@@ -155,18 +134,10 @@ export interface UnifiedMarketSnapshot {
 // ============================================================================
 
 export class PriceService {
-  // Snapshot cache
   private static unifiedSnapshot: UnifiedMarketSnapshot | null = null;
   private static lastSnapshotTime = 0;
   private static inflightPromise: Promise<UnifiedMarketSnapshot> | null = null;
   private static liveTickerInterval: NodeJS.Timeout | null = null;
-
-  // Per-provider caches with timestamps
-  private static tgjuCache: { data: any; ts: number } = { data: null, ts: 0 };
-  private static wallexCache: { data: any; ts: number } = { data: null, ts: 0 };
-  private static nobitexCache: { data: any; ts: number } = { data: null, ts: 0 };
-
-  // Provider health map (internal)
   private static providerHealth = new Map<string, ProviderHealth>();
 
   // ---------------------------------------------------------------------------
@@ -176,9 +147,6 @@ export class PriceService {
   static clearCache(): void {
     this.unifiedSnapshot = null;
     this.lastSnapshotTime = 0;
-    this.tgjuCache = { data: null, ts: 0 };
-    this.wallexCache = { data: null, ts: 0 };
-    this.nobitexCache = { data: null, ts: 0 };
   }
 
   static startLiveTicker(): void {
@@ -201,19 +169,13 @@ export class PriceService {
   }
 
   // ---------------------------------------------------------------------------
-  // Provider health tracking
+  // Provider health
   // ---------------------------------------------------------------------------
 
   private static markProviderSuccess(name: string): void {
     const h = this.providerHealth.get(name) || {
-      provider: name,
-      lastAttemptAt: 0,
-      lastSuccessAt: 0,
-      lastErrorAt: 0,
-      lastErrorMessage: '',
-      consecutiveFailures: 0,
-      totalSuccesses: 0,
-      totalFailures: 0,
+      provider: name, lastAttemptAt: 0, lastSuccessAt: 0, lastErrorAt: 0,
+      lastErrorMessage: '', consecutiveFailures: 0, totalSuccesses: 0, totalFailures: 0,
     };
     h.lastAttemptAt = Date.now();
     h.lastSuccessAt = Date.now();
@@ -224,14 +186,8 @@ export class PriceService {
 
   private static markProviderFailure(name: string, errorMessage: string): void {
     const h = this.providerHealth.get(name) || {
-      provider: name,
-      lastAttemptAt: 0,
-      lastSuccessAt: 0,
-      lastErrorAt: 0,
-      lastErrorMessage: '',
-      consecutiveFailures: 0,
-      totalSuccesses: 0,
-      totalFailures: 0,
+      provider: name, lastAttemptAt: 0, lastSuccessAt: 0, lastErrorAt: 0,
+      lastErrorMessage: '', consecutiveFailures: 0, totalSuccesses: 0, totalFailures: 0,
     };
     h.lastAttemptAt = Date.now();
     h.lastErrorAt = Date.now();
@@ -263,7 +219,7 @@ export class PriceService {
   }
 
   // ---------------------------------------------------------------------------
-  // Fetch helpers with timeout + structured errors
+  // Fetch helpers
   // ---------------------------------------------------------------------------
 
   private static async fetchJson(
@@ -289,9 +245,7 @@ export class PriceService {
 
       clearTimeout(timer);
 
-      if (!res.ok) {
-        return { data: null, error: `HTTP ${res.status}`, status: res.status };
-      }
+      if (!res.ok) return { data: null, error: `HTTP ${res.status}`, status: res.status };
 
       const data = await res.json().catch(() => null);
       if (data === null) return { data: null, error: 'invalid JSON' };
@@ -300,23 +254,6 @@ export class PriceService {
       const msg = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || String(e));
       return { data: null, error: msg };
     }
-  }
-
-  private static async fetchWithFallback(
-    primaryUrl: string,
-    secondaryUrl: string | undefined,
-    timeoutMs: number = FETCH_TIMEOUT_MS
-  ): Promise<{ data: any; from: 'primary' | 'secondary' | 'none'; error?: string }> {
-    const primary = await this.fetchJson(primaryUrl, timeoutMs);
-    if (primary.data) return { data: primary.data, from: 'primary' };
-
-    if (secondaryUrl && secondaryUrl !== primaryUrl) {
-      const secondary = await this.fetchJson(secondaryUrl, timeoutMs);
-      if (secondary.data) return { data: secondary.data, from: 'secondary' };
-      return { data: null, from: 'none', error: `primary: ${primary.error}; secondary: ${secondary.error}` };
-    }
-
-    return { data: null, from: 'none', error: primary.error };
   }
 
   // ---------------------------------------------------------------------------
@@ -340,19 +277,15 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // MAIN SNAPSHOT BUILDER
+  // MAIN SNAPSHOT
   // ==========================================================================
 
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
     const now = Date.now();
-
     if (this.unifiedSnapshot && now - this.lastSnapshotTime < CACHE_TTL_MS) {
       return this.unifiedSnapshot;
     }
-
-    if (this.inflightPromise) {
-      return this.inflightPromise;
-    }
+    if (this.inflightPromise) return this.inflightPromise;
 
     this.inflightPromise = this._fetchUnifiedSnapshot();
     try {
@@ -369,53 +302,34 @@ export class PriceService {
 
     const hubConfig = BotStorage.getApiHubConfig();
     const goldUrl = hubConfig?.priceBoard?.goldApiUrl || '';
-    const goldSecondaryUrl = hubConfig?.priceBoard?.goldSecondaryApiUrl || '';
     const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
-    const cryptoSecUrl = hubConfig?.priceBoard?.cryptoSecondaryApiUrl || '';
 
-    // ---- 1. Fetch all providers in parallel --------------------------------
-    const [goldRes, cryptoPrimaryRes, cryptoSecondaryRes] = await Promise.all([
-      goldUrl
-        ? this.fetchWithFallback(goldUrl, goldSecondaryUrl, FETCH_TIMEOUT_MS)
-        : Promise.resolve({ data: null, from: 'none' as const, error: 'no url' }),
+    // Fetch both providers in parallel
+    const [goldRes, cryptoRes] = await Promise.all([
+      goldUrl ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
       cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
-      cryptoSecUrl ? this.fetchJson(cryptoSecUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
     ]);
 
-    // ---- 2. Provider health ------------------------------------------------
     if (goldRes.data) this.markProviderSuccess('gold'); else this.markProviderFailure('gold', goldRes.error || 'unknown');
-    if (cryptoPrimaryRes.data) this.markProviderSuccess('crypto_primary'); else this.markProviderFailure('crypto_primary', cryptoPrimaryRes.error || 'unknown');
-    if (cryptoSecondaryRes.data) this.markProviderSuccess('crypto_secondary'); else this.markProviderFailure('crypto_secondary', cryptoSecondaryRes.error || 'unknown');
+    if (cryptoRes.data) this.markProviderSuccess('crypto'); else this.markProviderFailure('crypto', cryptoRes.error || 'unknown');
 
-    if (!goldRes.data) errors.push(`gold provider: ${goldRes.error}`);
-    if (!cryptoPrimaryRes.data) errors.push(`crypto primary: ${cryptoPrimaryRes.error}`);
-    if (!cryptoSecondaryRes.data) errors.push(`crypto secondary: ${cryptoSecondaryRes.error}`);
+    if (!goldRes.data) errors.push(`gold: ${goldRes.error}`);
+    if (!cryptoRes.data) errors.push(`crypto: ${cryptoRes.error}`);
 
-    // ---- 3. Extract TETHER (USDT) -----------------------------------------
-    const tetherData = this.extractTether(cryptoPrimaryRes.data, cryptoSecondaryRes.data);
+    // Extract
+    const tetherData = this.extractTether(cryptoRes.data);
     if (!tetherData.isLive) unavailable.push('usdt');
 
-    // ---- 4. Extract DOLLAR (independent from tether) ----------------------
     const dollarData = this.extractDollar(goldRes.data);
     if (!dollarData.isLive) unavailable.push('usd');
 
-    // ---- 5. Extract GOLD, COINS -------------------------------------------
     const goldBundle = this.extractGold(goldRes.data);
     if (!goldBundle.gold18.isLive) unavailable.push('gold18');
     if (!goldBundle.sekeEmami.isLive) unavailable.push('sekeEmami');
 
-    // ---- 6. Extract COINS (crypto) ----------------------------------------
-    const coins = this.extractCoins(cryptoPrimaryRes.data, cryptoSecondaryRes.data, tetherData.toman);
-
-    // ---- 7. Extract FIAT (derived from dollar) ----------------------------
+    const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
-
-    // ---- 8. Extract OIL ----------------------------------------------------
     const oil = this.extractOil(goldRes.data);
-
-    // ---- 9. Build snapshot -------------------------------------------------
-    const snapshotAge = fetchStart - (this.lastSnapshotTime || fetchStart);
-    const isStale = this.unifiedSnapshot !== null && snapshotAge > STALE_THRESHOLD_MS;
 
     const nowIso = new Date().toISOString();
     let persianTime = nowIso;
@@ -439,6 +353,8 @@ export class PriceService {
       ons: goldBundle.ons.toGoldInfo(),
     };
 
+    const isLive = tetherData.isLive || dollarData.isLive || goldBundle.gold18.isLive;
+
     const snapshot: UnifiedMarketSnapshot = {
       timestamp: fetchStart,
       serverTime: nowIso,
@@ -446,9 +362,9 @@ export class PriceService {
       metadata: {
         fetchedAt: fetchStart,
         generatedAt: fetchStart,
-        isLive: tetherData.isLive || dollarData.isLive || goldBundle.gold18.isLive,
-        isStale,
-        ageMs: Date.now() - fetchStart,
+        isLive,
+        isStale: !isLive,
+        ageMs: 0,
         unavailableAssets: unavailable,
         providers: this.getProviderSummary(),
         errors,
@@ -479,11 +395,12 @@ export class PriceService {
       fiat,
     };
 
-    if (snapshot.metadata.isLive || this.unifiedSnapshot === null) {
+    // Always update the snapshot — even if partially unavailable, some assets have valid data
+    if (isLive || this.unifiedSnapshot === null) {
       this.unifiedSnapshot = snapshot;
       this.lastSnapshotTime = fetchStart;
     } else if (this.unifiedSnapshot) {
-      console.warn('[PriceService] all providers failed — keeping last known snapshot, marking as stale');
+      console.warn('[PriceService] all providers failed — keeping last known snapshot');
       this.unifiedSnapshot.metadata.isStale = true;
       this.unifiedSnapshot.metadata.errors = errors;
       return this.unifiedSnapshot;
@@ -496,63 +413,46 @@ export class PriceService {
   // EXTRACTORS
   // ==========================================================================
 
-  private static extractTether(primaryData: any, secondaryData: any): {
+  /**
+   * Tether extraction from FastCreat Nobitex.
+   * IMPORTANT: FastCreat's `irr` field is ALREADY in Toman (despite the name).
+   */
+  private static extractTether(cryptoData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
-    const nobitexUSDT =
-      primaryData?.result?.USDT ||
-      secondaryData?.result?.USDT;
+    const result = cryptoData?.result;
 
-    if (nobitexUSDT?.irr) {
-      const pRials = parseFloat(String(nobitexUSDT.irr));
-      const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+    // FastCreat format: { result: { USDT: { irr: 267999, usdt: 1, dayChange: 1.2 } } }
+    const usdt = result?.USDT || result?.usdt;
+    if (usdt?.irr) {
+      const pToman = parseFloat(String(usdt.irr));   // already Toman
       if (this.isValidTetherPrice(pToman)) {
-        const ch = parseFloat(String(nobitexUSDT.dayChange || '0')) || 0;
+        const ch = parseFloat(String(usdt.dayChange || '0')) || 0;
         return {
-          toman: pToman,
+          toman: Math.round(pToman),
           dayChange: ch,
           highToman: Math.round(pToman * 1.005),
           lowToman: Math.round(pToman * 0.995),
-          source: 'nobitex',
+          source: 'fast_creat',
           isLive: true,
         };
       }
     }
 
-    const nobitexStats = primaryData?.stats || secondaryData?.stats;
-    if (nobitexStats?.['usdt-rls']?.latest) {
-      const pRials = parseFloat(nobitexStats['usdt-rls'].latest);
+    // Fallback: Nobitex raw stats: { stats: { 'usdt-rls': { latest: 2679990 } } }
+    const stats = cryptoData?.stats;
+    if (stats?.['usdt-rls']?.latest) {
+      const pRials = parseFloat(stats['usdt-rls'].latest);
       const pToman = Math.round(pRials / RIALS_PER_TOMAN);
       if (this.isValidTetherPrice(pToman)) {
-        const ch = parseFloat(nobitexStats['usdt-rls'].dayChange || '0') || 0;
+        const ch = parseFloat(stats['usdt-rls'].dayChange || '0') || 0;
         return {
           toman: pToman,
           dayChange: ch,
           highToman: Math.round(pToman * 1.005),
           lowToman: Math.round(pToman * 0.995),
-          source: 'nobitex',
-          isLive: true,
-        };
-      }
-    }
-
-    const wallexSymbols =
-      primaryData?.result?.symbols || primaryData?.symbols ||
-      secondaryData?.result?.symbols || secondaryData?.symbols;
-    const usdtTmn = wallexSymbols?.USDTTMN?.stats;
-    if (usdtTmn?.lastPrice) {
-      const pToman = Math.round(parseFloat(usdtTmn.lastPrice));
-      if (this.isValidTetherPrice(pToman)) {
-        const ch = parseFloat(usdtTmn['24h_ch'] || '0') || 0;
-        const high = parseFloat(usdtTmn['24h_highPrice'] || '0');
-        const low = parseFloat(usdtTmn['24h_lowPrice'] || '0');
-        return {
-          toman: pToman,
-          dayChange: ch,
-          highToman: high > 0 ? Math.round(high) : Math.round(pToman * 1.005),
-          lowToman: low > 0 ? Math.round(low) : Math.round(pToman * 0.995),
-          source: 'wallex',
+          source: 'nobitex_raw',
           isLive: true,
         };
       }
@@ -561,20 +461,24 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
+  /**
+   * Dollar extraction from TGJU (independent from tether).
+   * TGJU `p` values are RIAL → divide by 10.
+   */
   private static extractDollar(goldData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
     const current = goldData?.current || goldData?.data?.current;
+    const field = current?.price_dollar_rl;
 
-    const dollarField = current?.price_dollar_rl;
-    if (dollarField?.p) {
-      const pRials = this.parseNumberFromRaw(dollarField.p);
+    if (field?.p) {
+      const pRials = this.parseNumberFromRaw(field.p);
       const pToman = Math.round(pRials / RIALS_PER_TOMAN);
       if (this.isValidTetherPrice(pToman)) {
-        const dp = parseFloat(String(dollarField.dp || dollarField.d || '0')) || 0;
-        const high = this.parseNumberFromRaw(dollarField.h);
-        const low = this.parseNumberFromRaw(dollarField.l);
+        const dp = parseFloat(String(field.dp || field.d || '0')) || 0;
+        const high = this.parseNumberFromRaw(field.h);
+        const low = this.parseNumberFromRaw(field.l);
         return {
           toman: pToman,
           dayChange: dp,
@@ -589,17 +493,15 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
+  /**
+   * Gold & coins extraction.
+   * FastCreat gold `price[0]` is RIAL → divide by 10.
+   * TGJU gold `p` is RIAL → divide by 10.
+   */
   private static extractGold(goldData: any): {
-    gold18:        GoldExtract;
-    gold24:        GoldExtract;
-    mesghal:       GoldExtract;
-    sekeEmami:     GoldExtract;
-    sekeBahar:     GoldExtract;
-    sekeNim:       GoldExtract;
-    sekeRob:       GoldExtract;
-    sekeGerami:    GoldExtract;
-    silver:        GoldExtract;
-    ons:           GoldExtract;
+    gold18: GoldExtract; gold24: GoldExtract; mesghal: GoldExtract;
+    sekeEmami: GoldExtract; sekeBahar: GoldExtract; sekeNim: GoldExtract;
+    sekeRob: GoldExtract; sekeGerami: GoldExtract; silver: GoldExtract; ons: GoldExtract;
   } {
     const empty = (title: string): GoldExtract => new GoldExtract(title, 0, 0, 0, 0, false, 'unavailable');
 
@@ -614,25 +516,28 @@ export class PriceService {
     const silv = empty('نقره ۹۹۹');
     const ons  = empty('انس جهانی طلا');
 
-    const current = goldData?.current || goldData?.data?.current;
-
+    // --- FastCreat gold: { result: [{ title, price: ["rials", "(+1.2%)"], highest, lowest }] } ---
     const arr = goldData?.result;
     if (Array.isArray(arr)) {
       for (const item of arr) {
         if (!item?.title) continue;
         const title = String(item.title);
         const pRials = parseInt(String(item.price?.[0] || '0').replace(/[^0-9]/g, ''), 10);
+        if (!pRials) continue;
         const pToman = Math.round(pRials / RIALS_PER_TOMAN);
+
         const chMatch = String(item.price?.[1] || '').match(/\(([+-]?\d+(?:\.\d+)?)%\)/);
         const ch = chMatch ? parseFloat(chMatch[1]) : 0;
+
         const highR = parseInt(String(item.highest || '0').replace(/[^0-9]/g, ''), 10);
         const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
         const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
         const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
 
-        if (title.includes('18 عیار') && this.isValidGold18Price(pToman)) {
+        // Match titles — FastCreat uses different variants for each
+        if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(pToman)) {
           g18.set(pToman, highT, lowT, ch, true, 'fast_creat');
-        } else if (title.includes('۲۴ عیار') || title.includes('24 عیار')) {
+        } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
           g24.set(pToman, highT, lowT, ch, true, 'fast_creat');
         } else if (title.includes('مثقال')) {
           mes.set(pToman, highT, lowT, ch, true, 'fast_creat');
@@ -648,10 +553,14 @@ export class PriceService {
           skG.set(pToman, highT, lowT, ch, true, 'fast_creat');
         } else if (title.includes('نقره')) {
           silv.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        } else if (title.includes('انس')) {
+          // ONS may be in USD not Rial — handle separately if needed
         }
       }
     }
 
+    // --- TGJU fallback: current.<field>.p in RIAL ---
+    const current = goldData?.current || goldData?.data?.current;
     if (current) {
       const tg = (key: string, target: GoldExtract) => {
         const f = current[key];
@@ -671,7 +580,16 @@ export class PriceService {
       tg('rob', skR);
       tg('gerami', skG);
       tg('silver', silv);
-      tg('ons', ons);
+      // ONS on TGJU is in USD — different scale
+      const onsField = current['ons'];
+      if (onsField?.p) {
+        const usdPrice = this.parseNumberFromRaw(onsField.p);
+        if (usdPrice > 100) {
+          const ch = parseFloat(String(onsField.dp || onsField.d || '0')) || 0;
+          // Store as USD directly (tomanPrice field holds USD for ONS for compat)
+          ons.set(Math.round(usdPrice), 0, 0, ch, true, 'tgju');
+        }
+      }
     }
 
     return {
@@ -681,31 +599,33 @@ export class PriceService {
     };
   }
 
+  /**
+   * Coins extraction from FastCreat Nobitex.
+   * CRITICAL: `irr` field is TOMAN (verified from legacy PHP code) → no division.
+   */
   private static extractCoins(
-    primaryData: any,
-    secondaryData: any,
+    cryptoData: any,
     tetherToman: number
   ): Record<string, CoinInfo> {
     const coins: Record<string, CoinInfo> = {};
+    const result = cryptoData?.result;
 
-    const nobitexResult = primaryData?.result || secondaryData?.result;
-    if (nobitexResult && typeof nobitexResult === 'object') {
-      for (const [symKey, item] of Object.entries(nobitexResult)) {
-        if (symKey === 'USDT') continue;
+    if (result && typeof result === 'object') {
+      for (const [symKey, item] of Object.entries(result)) {
+        if (symKey.toUpperCase() === 'USDT') continue;
         const it: any = item;
         if (!it || typeof it !== 'object') continue;
 
         const sym = symKey.toUpperCase();
-        const rawIrr = parseFloat(String(it.irr || '0'));
-        const rawUsdt = parseFloat(String(it.usdt || '0'));
+        // `irr` is TOMAN (not Rial, despite the name)
+        const toman = parseFloat(String(it.irr || '0'));
+        const usdt = parseFloat(String(it.usdt || '0'));
         const dayCh = parseFloat(String(it.dayChange || '0')) || 0;
 
-        if (rawUsdt > 0 || rawIrr > 0) {
-          const finalToman = rawIrr > 0
-            ? Math.round(rawIrr / RIALS_PER_TOMAN)
-            : (tetherToman > 0 ? Math.round(rawUsdt * tetherToman) : 0);
-          const finalUsd = rawUsdt > 0
-            ? rawUsdt
+        if (toman > 0 || usdt > 0) {
+          const finalToman = toman > 0 ? Math.round(toman)
+            : (tetherToman > 0 ? Math.round(usdt * tetherToman) : 0);
+          const finalUsd = usdt > 0 ? usdt
             : (tetherToman > 0 ? parseFloat((finalToman / tetherToman).toFixed(6)) : 0);
 
           if (finalToman > 0 || finalUsd > 0) {
@@ -715,8 +635,8 @@ export class PriceService {
               usdt: finalUsd,
               irr: finalToman,
               dayChange: dayCh,
-              source: 'nobitex',
-              isDerived: rawUsdt === 0 && tetherToman > 0,
+              source: 'fast_creat',
+              isDerived: usdt === 0 && tetherToman > 0,
             };
             coins[sym.toLowerCase()] = coin;
             coins[sym] = coin;
@@ -725,49 +645,7 @@ export class PriceService {
       }
     }
 
-    const wallexSymbols =
-      primaryData?.result?.symbols || primaryData?.symbols ||
-      secondaryData?.result?.symbols || secondaryData?.symbols;
-    if (wallexSymbols && typeof wallexSymbols === 'object') {
-      for (const [key, rawItem] of Object.entries(wallexSymbols)) {
-        const it: any = rawItem;
-        const st = it?.stats;
-        if (!st?.lastPrice) continue;
-        const lastP = parseFloat(st.lastPrice);
-        if (!this.isValidCoinUsd(lastP) && lastP <= 0) continue;
-
-        const base = String(it.baseAsset || key.replace('TMN', '').replace('USDT', '')).toUpperCase();
-        if (!base || base === 'USDT') continue;
-
-        const quote = String(it.quoteAsset || (key.endsWith('TMN') ? 'TMN' : 'USDT'));
-        const ch = parseFloat(st['24h_ch'] || '0') || 0;
-        const highP = parseFloat(st['24h_highPrice'] || '0');
-        const lowP  = parseFloat(st['24h_lowPrice']  || '0');
-
-        const coinToman = quote === 'TMN'
-          ? Math.round(lastP)
-          : (tetherToman > 0 ? Math.round(lastP * tetherToman) : 0);
-        const coinUsd = quote === 'USDT'
-          ? lastP
-          : (tetherToman > 0 ? parseFloat((coinToman / tetherToman).toFixed(6)) : 0);
-
-        if (!coins[base.toLowerCase()] || coins[base.toLowerCase()].unavailable) {
-          const coin: CoinInfo = {
-            name: base,
-            symbol: base,
-            usdt: coinUsd,
-            irr: coinToman,
-            dayChange: ch,
-            dayHighToman: highP > 0 ? Math.round(highP) : undefined,
-            dayLowToman:  lowP  > 0 ? Math.round(lowP)  : undefined,
-            source: 'wallex',
-          };
-          coins[base.toLowerCase()] = coin;
-          coins[base] = coin;
-        }
-      }
-    }
-
+    // Add tether itself
     if (tetherToman > 0) {
       const usdt: CoinInfo = {
         name: 'تتر دیجیتال',
@@ -775,18 +653,17 @@ export class PriceService {
         usdt: 1.0,
         irr: tetherToman,
         dayChange: 0,
-        source: 'nobitex',
+        source: 'fast_creat',
       };
       coins['usdt'] = usdt;
       coins['tether'] = usdt;
       coins['USDT'] = usdt;
     }
 
+    // Manual aliases
     for (const [alias, standard] of Object.entries(MANUAL_ALIASES)) {
       const std = standard.toLowerCase();
-      if (coins[std]) {
-        coins[alias.toLowerCase()] = coins[std];
-      }
+      if (coins[std]) coins[alias.toLowerCase()] = coins[std];
     }
 
     return coins;
@@ -803,14 +680,14 @@ export class PriceService {
     };
 
     const crosses: Array<[string, string, number]> = [
-      ['eur', 'Euro (یورو)',       1.08],
+      ['eur', 'Euro (یورو)', 1.08],
       ['gbp', 'British Pound (پوند)', 1.27],
       ['aed', 'UAE Dirham (درهم)', 0.272],
       ['try', 'Turkish Lira (لیر)', 0.029],
       ['cny', 'Chinese Yuan (یوان)', 0.138],
-      ['cad', 'Canadian Dollar',   0.73],
+      ['cad', 'Canadian Dollar', 0.73],
       ['aud', 'Australian Dollar', 0.66],
-      ['chf', 'Swiss Franc',       1.12],
+      ['chf', 'Swiss Franc', 1.12],
     ];
 
     const out: Record<string, AssetInfo> = { usd };
@@ -836,12 +713,11 @@ export class PriceService {
       const f = current?.[fieldKey];
       if (f?.p) {
         const usd = this.parseNumberFromRaw(f.p);
-        const ch  = parseFloat(String(f.dp || f.d || '0')) || 0;
-        if (usd > 0) {
+        const ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+        if (usd > 0 && usd < 10_000) {
           return {
             key, name, symbol, category: 'oil',
             priceUsd: usd,
-            priceToman: undefined,
             dayChange: ch,
             unit: 'per barrel',
             source: 'tgju',
@@ -864,7 +740,10 @@ export class PriceService {
   static async getOilPrice(type: 'brent' | 'wti' | 'gas' = 'brent'): Promise<AssetInfo> {
     const snap = await this.getUnifiedMarketSnapshot();
     const key = (type || 'brent').toLowerCase();
-    return snap.oil[key] || { key: `oil_${key}`, name: key, symbol: key.toUpperCase(), category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable' };
+    return snap.oil[key] || {
+      key: `oil_${key}`, name: key, symbol: key.toUpperCase(),
+      category: 'oil', dayChange: 0, unavailable: true, unit: 'per barrel', source: 'unavailable',
+    };
   }
 
   static async getGoldPrice(): Promise<GoldInfo | null> {
@@ -901,21 +780,21 @@ export class PriceService {
     const amount = parsed.amount > 0 ? parsed.amount : 1;
     const snap = await this.getUnifiedMarketSnapshot();
 
+    // Oil
     if (aliasKey.startsWith('oil') || clean.includes('نفت') || clean.includes('گاز')) {
       const type: 'brent' | 'wti' | 'gas' =
         aliasKey === 'oil_wti' || clean.includes('wti') ? 'wti'
-        : clean.includes('گاز') ? 'gas'
-        : 'brent';
+        : clean.includes('گاز') ? 'gas' : 'brent';
       const oil = await this.getOilPrice(type);
       if (oil.unavailable) return { ...oil, unavailable: true };
       return {
         ...oil,
         name: amount > 1 ? `${amount} ${oil.name}` : oil.name,
         priceUsd: oil.priceUsd ? oil.priceUsd * amount : undefined,
-        priceToman: oil.priceToman ? Math.round(oil.priceToman * amount) : undefined,
       };
     }
 
+    // Gold / Silver / Coins
     if (
       aliasKey.startsWith('gold') || aliasKey.startsWith('silver') || aliasKey.startsWith('seke') ||
       aliasKey.startsWith('mesghal') || aliasKey.startsWith('ons') ||
@@ -924,10 +803,7 @@ export class PriceService {
     ) {
       const item = await this.getGoldOrCoinItem(clean);
       if (item.unavailable) {
-        return {
-          key: aliasKey, name: item.title, symbol: aliasKey.toUpperCase(),
-          category: 'gold', dayChange: 0, unavailable: true,
-        };
+        return { key: aliasKey, name: item.title, symbol: aliasKey.toUpperCase(), category: 'gold', dayChange: 0, unavailable: true };
       }
       const usdt = snap.tether.toman || 1;
       return {
@@ -941,6 +817,7 @@ export class PriceService {
       };
     }
 
+    // Fiat
     const fiatKey = (aliasKey || '').toLowerCase();
     if (snap.fiat[fiatKey] || snap.fiat[clean]) {
       const f = snap.fiat[fiatKey] || snap.fiat[clean];
@@ -953,12 +830,14 @@ export class PriceService {
       };
     }
 
+    // Crypto
     const coins = snap.coins;
     const coin = coins[aliasKey] || coins[clean] || coins[fiatKey];
     if (coin) {
       if (coin.unavailable) {
         return {
-          key: aliasKey, name: coin.name || aliasKey.toUpperCase(), symbol: (coin.symbol || aliasKey).toUpperCase(),
+          key: aliasKey, name: coin.name || aliasKey.toUpperCase(),
+          symbol: (coin.symbol || aliasKey).toUpperCase(),
           category: 'crypto', dayChange: 0, unavailable: true,
         };
       }
@@ -989,12 +868,7 @@ export class PriceService {
       if (!c || c.unavailable) {
         return { key, name, symbol, category: 'crypto', dayChange: 0, unavailable: true };
       }
-      return {
-        key, name, symbol, category: 'crypto',
-        priceUsd: c.usdt,
-        priceToman: c.irr,
-        dayChange: c.dayChange,
-      };
+      return { key, name, symbol, category: 'crypto', priceUsd: c.usdt, priceToman: c.irr, dayChange: c.dayChange };
     };
 
     return [
@@ -1051,15 +925,11 @@ export class PriceService {
               return {
                 points, high, low,
                 weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
-                startPrice: start,
-                currentPrice: current,
-                source: 'binance',
-                isSynthetic: false,
+                startPrice: start, currentPrice: current,
+                source: 'binance', isSynthetic: false,
               };
             }
           }
-        } else {
-          console.warn(`[PriceService] binance klines for ${cleanSym} returned HTTP ${res.status}`);
         }
       } catch (e: any) {
         console.warn(`[PriceService] binance klines for ${cleanSym} failed: ${e?.message || e}`);
@@ -1069,14 +939,10 @@ export class PriceService {
     }
 
     return {
-      points: [],
-      high: 0,
-      low: 0,
+      points: [], high: 0, low: 0,
       weekChangePercent: dayChange,
-      startPrice: 0,
-      currentPrice: currentPrice || 0,
-      source: 'unavailable',
-      isSynthetic: false,
+      startPrice: 0, currentPrice: currentPrice || 0,
+      source: 'unavailable', isSynthetic: false,
     };
   }
 
@@ -1085,11 +951,7 @@ export class PriceService {
   // ==========================================================================
 
   static async getMiniAppData(): Promise<{
-    highlights: any[];
-    crypto: any[];
-    gold: any[];
-    fiat: any[];
-    oil: any[];
+    highlights: any[]; crypto: any[]; gold: any[]; fiat: any[]; oil: any[];
     serverTime: string;
   }> {
     try {
@@ -1118,14 +980,11 @@ export class PriceService {
         return {
           key, symbol, name, persianName, category,
           priceToman: Math.round(safeToman),
-          priceUsd: safeUsd !== undefined
-            ? parseFloat(safeUsd.toFixed(safeUsd < 1 ? 4 : 2))
-            : undefined,
+          priceUsd: safeUsd !== undefined ? parseFloat(safeUsd.toFixed(safeUsd < 1 ? 4 : 2)) : undefined,
           dayChange: parseFloat((dayChange || 0).toFixed(2)),
           highToman: highToman ? Math.round(highToman) : undefined,
           lowToman: lowToman ? Math.round(lowToman) : undefined,
-          sparkline,
-          hourlyTrend,
+          sparkline, hourlyTrend,
         };
       };
 
@@ -1174,10 +1033,7 @@ export class PriceService {
         return makeItem(
           c.key, c.key.toUpperCase(), c.name, c.fa, 'crypto',
           c.key === 'usdt' ? tetherToman : coin.irr,
-          coin.usdt,
-          coin.dayChange,
-          coin.dayHighToman,
-          coin.dayLowToman
+          coin.usdt, coin.dayChange, coin.dayHighToman, coin.dayLowToman
         );
       });
 
@@ -1207,10 +1063,7 @@ export class PriceService {
         makeItem('gas',   'GAS',   'Natural Gas',     'گاز طبیعی',       'oil', snap.oil.gas?.priceToman || 0,   snap.oil.gas?.priceUsd,   snap.oil.gas?.dayChange || 0),
       ];
 
-      return {
-        highlights, crypto, gold, fiat, oil,
-        serverTime: snap.serverTime,
-      };
+      return { highlights, crypto, gold, fiat, oil, serverTime: snap.serverTime };
     } catch (e: any) {
       console.error('[PriceService] getMiniAppData failed:', e?.message || e);
       return { highlights: [], crypto: [], gold: [], fiat: [], oil: [], serverTime: new Date().toISOString() };
@@ -1218,7 +1071,7 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // SPARKLINE HELPER
+  // SPARKLINE
   // ==========================================================================
 
   static generateSparklinePoints(basePrice: number, changePercent: number, length: number = 24): number[] {
@@ -1239,20 +1092,14 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // PARSING HELPERS
+  // PARSING
   // ==========================================================================
 
   static parseNaturalQuery(raw: string): {
-    cleanKey: string;
-    amount: number;
-    isQuestion: boolean;
-    isOverviewRequest: boolean;
-    isMiniAppRequest: boolean;
-    isGreetingOrHelp: boolean;
+    cleanKey: string; amount: number; isQuestion: boolean;
+    isOverviewRequest: boolean; isMiniAppRequest: boolean; isGreetingOrHelp: boolean;
   } {
-    if (!raw) {
-      return { cleanKey: '', amount: 1, isQuestion: false, isOverviewRequest: false, isMiniAppRequest: false, isGreetingOrHelp: false };
-    }
+    if (!raw) return { cleanKey: '', amount: 1, isQuestion: false, isOverviewRequest: false, isMiniAppRequest: false, isGreetingOrHelp: false };
 
     let text = this.faNumToEn(raw.trim().toLowerCase());
     text = text.replace(/@[a-z0-9_]+/gi, '').trim();
@@ -1337,7 +1184,7 @@ export class PriceService {
 }
 
 // ============================================================================
-// INTERNAL HELPER CLASS
+// INTERNAL HELPER
 // ============================================================================
 
 class GoldExtract {
