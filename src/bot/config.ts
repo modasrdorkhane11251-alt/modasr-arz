@@ -1,8 +1,5 @@
-/**
- * Telegram Bot & API Configuration
- * Sensitive market-data credentials must come from server-side environment variables.
- * No secrets are stored in the repository.
- */
+import dotenv from 'dotenv';
+dotenv.config();
 
 const env = process.env;
 
@@ -78,7 +75,7 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'ربع سکه': 'seke_rob',
   'سکه گرمی': 'seke_gerami',
 
-  // Fiat Currencies (واحدهای پول ملی)
+  // Fiat Currencies
   'دلار': 'usd',
   'دلار آمریکا': 'usd',
   'اسکناس دلار': 'usd',
@@ -88,7 +85,7 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'dollar': 'usd',
   'usd': 'usd',
 
-  // Cryptocurrencies: Tether Stablecoin (رمزارز تتر)
+  // Cryptocurrencies: Tether Stablecoin
   'تتر': 'usdt',
   'tether': 'usdt',
   'usdt': 'usdt',
