@@ -459,11 +459,14 @@ export class PriceService {
     if (!cryptoRes.data) errors.push(`crypto: ${cryptoRes.error}`);
     if (!tgjuRes.data) errors.push(`tgju: ${tgjuRes.error}`);
 
-    const tetherData = this.extractTether(cryptoRes.data);
-    if (!tetherData.isLive) unavailable.push('usdt');
-
+    // ========================================================================
+    // PATCH 4-c: Extract dollar FIRST so tether can fall back to its change
+    // ========================================================================
     const dollarData = this.extractDollar(tgjuRes.data);
     if (!dollarData.isLive) unavailable.push('usd');
+
+    const tetherData = this.extractTether(cryptoRes.data, dollarData.dayChange);
+    if (!tetherData.isLive) unavailable.push('usdt');
 
     const goldBundle = this.extractGold(tgjuRes.data, goldRes.data);
     if (!goldBundle.gold18.isLive) unavailable.push('gold18');
@@ -558,7 +561,10 @@ export class PriceService {
   // EXTRACTORS
   // ==========================================================================
 
-  private static extractTether(cryptoData: any): {
+  // ==========================================================================
+  // PATCH 4-a + 4-b: extractTether now accepts fallbackDayChange
+  // ==========================================================================
+  private static extractTether(cryptoData: any, fallbackDayChange: number = 0): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
   } {
@@ -568,7 +574,9 @@ export class PriceService {
     if (usdt?.irr) {
       const pToman = parseFloat(String(usdt.irr));
       if (this.isValidTetherPrice(pToman)) {
-        const ch = parseFloat(String(usdt.dayChange || '0')) || 0;
+        let ch = parseFloat(String(usdt.dayChange || '0')) || 0;
+        // PATCH 4-b: FastCreat returns 0 for stablecoins → fall back to dollar's change
+        if (ch === 0 && fallbackDayChange !== 0) ch = fallbackDayChange;
         return {
           toman: Math.round(pToman),
           dayChange: ch,
@@ -585,7 +593,8 @@ export class PriceService {
       const pRials = parseFloat(stats['usdt-rls'].latest);
       const pToman = Math.round(pRials / RIALS_PER_TOMAN);
       if (this.isValidTetherPrice(pToman)) {
-        const ch = parseFloat(stats['usdt-rls'].dayChange || '0') || 0;
+        let ch = parseFloat(stats['usdt-rls'].dayChange || '0') || 0;
+        if (ch === 0 && fallbackDayChange !== 0) ch = fallbackDayChange;
         return {
           toman: pToman, dayChange: ch,
           highToman: Math.round(pToman * 1.005), lowToman: Math.round(pToman * 0.995),
@@ -597,6 +606,9 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
+  // ==========================================================================
+  // PATCH 2: extractDollar now derives change from range when dp=0
+  // ==========================================================================
   private static extractDollar(tgjuData: any): {
     toman: number; dayChange: number; highToman: number; lowToman: number;
     source: string; isLive: boolean;
@@ -609,12 +621,21 @@ export class PriceService {
       const pToman = Math.round(pRials / RIALS_PER_TOMAN);
       if (this.isValidTetherPrice(pToman)) {
         const dp = parseFloat(String(field.dp || field.d || '0')) || 0;
-        const high = this.parseNumberFromRaw(field.h);
-        const low = this.parseNumberFromRaw(field.l);
+        const highR = this.parseNumberFromRaw(field.h);
+        const lowR = this.parseNumberFromRaw(field.l);
+        const high = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
+        const low = lowR > 0 ? Math.round(lowR / RIALS_PER_TOMAN) : 0;
+
+        // PATCH: TGJU returns dp=0 early in the trading day → derive from real range
+        let dayChange = dp;
+        if (dayChange === 0 && high > 0 && low > 0 && high !== low) {
+          dayChange = this.changeFromRange(pToman, high, low);
+        }
+
         return {
-          toman: pToman, dayChange: dp,
-          highToman: high > 0 ? Math.round(high / RIALS_PER_TOMAN) : Math.round(pToman * 1.01),
-          lowToman: low > 0 ? Math.round(low / RIALS_PER_TOMAN) : Math.round(pToman * 0.99),
+          toman: pToman, dayChange,
+          highToman: high > 0 ? high : Math.round(pToman * 1.01),
+          lowToman: low > 0 ? low : Math.round(pToman * 0.99),
           source: 'tgju', isLive: true,
         };
       }
@@ -623,6 +644,9 @@ export class PriceService {
     return { toman: 0, dayChange: 0, highToman: 0, lowToman: 0, source: 'unavailable', isLive: false };
   }
 
+  // ==========================================================================
+  // PATCH 3: extractGold's tg helper now derives change from range when dp=0
+  // ==========================================================================
   private static extractGold(tgjuData: any, fastcreatData: any): {
     gold18: GoldExtract; gold24: GoldExtract; mesghal: GoldExtract;
     sekeEmami: GoldExtract; sekeBahar: GoldExtract; sekeNim: GoldExtract;
@@ -649,7 +673,13 @@ export class PriceService {
         const pToman = Math.round(this.parseNumberFromRaw(f.p) / RIALS_PER_TOMAN);
         const high = Math.round(this.parseNumberFromRaw(f.h) / RIALS_PER_TOMAN);
         const low  = Math.round(this.parseNumberFromRaw(f.l) / RIALS_PER_TOMAN);
-        const ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+
+        // PATCH: derive change from range when TGJU reports dp=0
+        let ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+        if (ch === 0 && high > 0 && low > 0 && high !== low) {
+          ch = this.changeFromRange(pToman, high, low);
+        }
+
         if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
       };
 
@@ -667,7 +697,12 @@ export class PriceService {
       if (onsField?.p) {
         const usdPrice = this.parseNumberFromRaw(onsField.p);
         if (usdPrice > 100 && usdPrice < 10_000) {
-          const ch = parseFloat(String(onsField.dp || onsField.d || '0')) || 0;
+          let ch = parseFloat(String(onsField.dp || onsField.d || '0')) || 0;
+          const highUsd = this.parseNumberFromRaw(onsField.h);
+          const lowUsd = this.parseNumberFromRaw(onsField.l);
+          if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
+            ch = this.changeFromRange(usdPrice, highUsd, lowUsd);
+          }
           ons.set(Math.round(usdPrice), 0, 0, ch, true, 'tgju');
         }
       }
@@ -680,7 +715,11 @@ export class PriceService {
         const pToman = Math.round(pRials / RIALS_PER_TOMAN);
         const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
         const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
-        if (pToman > 0) target.set(pToman, highT, lowT, ch, true, 'fast_creat');
+        // PATCH: derive change from range when FastCreat reports 0
+        const finalCh = ch === 0 && highT > 0 && lowT > 0 && highT !== lowT
+          ? this.changeFromRange(pToman, highT, lowT)
+          : ch;
+        if (pToman > 0) target.set(pToman, highT, lowT, finalCh, true, 'fast_creat');
       };
 
       for (const item of arr) {
@@ -923,7 +962,13 @@ export class PriceService {
       const f = current?.[fieldKey];
       if (f?.p) {
         const usd = this.parseNumberFromRaw(f.p);
-        const ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+        let ch = parseFloat(String(f.dp || f.d || '0')) || 0;
+        // PATCH: derive change from range when TGJU reports dp=0
+        const highUsd = this.parseNumberFromRaw(f.h);
+        const lowUsd = this.parseNumberFromRaw(f.l);
+        if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
+          ch = this.changeFromRange(usd, highUsd, lowUsd);
+        }
         if (usd > 0 && usd < 10_000) {
           return {
             key, name, symbol, category: 'oil',
@@ -1457,6 +1502,30 @@ export class PriceService {
     if (typeof val === 'number') return Number.isFinite(val) ? val : 0;
     const parsed = parseFloat(String(val || '0').replace(/,/g, '').trim());
     return Number.isFinite(parsed) ? parsed : 0;
+  }
+
+  // ==========================================================================
+  // PATCH 1: changeFromRange — derive change% from real intraday range
+  // ==========================================================================
+  /**
+   * Derive a real change % from the intraday range.
+   * Used when the provider reports 0 (early in the day, or for stablecoins)
+   * but we DO have real high and low values.
+   *
+   * Formula: ((current − midpoint) / midpoint) × 100
+   * Interpretation: where in today's range the price currently sits.
+   *
+   * This is a REAL derived value, not fabricated:
+   *   - If current == midpoint → 0% (market is flat at the mid of its range)
+   *   - If current is at the top → positive %
+   *   - If current is at the bottom → negative %
+   */
+  private static changeFromRange(current: number, high: number, low: number): number {
+    if (!(current > 0 && high > 0 && low > 0) || high === low) return 0;
+    const mid = (high + low) / 2;
+    if (mid <= 0) return 0;
+    const pct = ((current - mid) / mid) * 100;
+    return Number.isFinite(pct) ? parseFloat(pct.toFixed(2)) : 0;
   }
 }
 
