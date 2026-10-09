@@ -65,9 +65,79 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
   const [feedback, setFeedback] = useState<{ type: 'success' | 'error'; message: string } | null>(null);
   const [copied, setCopied] = useState<boolean>(false);
 
-  // Real-time Latency (Ping) test state using Fetch API
+  // Latency test state
   const [isTestingLatency, setIsTestingLatency] = useState<boolean>(false);
   const [latencyResult, setLatencyResult] = useState<LatencyTestResult | null>(null);
+
+  // ============================================================================
+  // NEW: Credentials form state (bot token + admin ID)
+  // ============================================================================
+  const [credToken, setCredToken] = useState<string>('');
+  const [credAdminId, setCredAdminId] = useState<string>('');
+  const [credMasked, setCredMasked] = useState<string>('');
+  const [credHasToken, setCredHasToken] = useState<boolean>(false);
+  const [savingCred, setSavingCred] = useState<boolean>(false);
+  const [credFeedback, setCredFeedback] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+
+  const fetchCredStatus = async () => {
+    try {
+      const r = await fetch('/api/config/credentials/status');
+      if (r.ok) {
+        const d = await r.json();
+        setCredMasked(d.maskedToken || '');
+        setCredHasToken(!!d.hasToken);
+        setCredAdminId(d.adminId || '');
+      }
+    } catch {
+      // ignore
+    }
+  };
+
+  useEffect(() => {
+    fetchCredStatus();
+  }, []);
+
+  const handleSaveCredentials = async () => {
+    setSavingCred(true);
+    setCredFeedback(null);
+    try {
+      const payload: any = {};
+      if (credToken.trim()) payload.botToken = credToken.trim();
+      if (credAdminId.trim()) payload.adminId = credAdminId.trim();
+
+      if (Object.keys(payload).length === 0) {
+        setCredFeedback({ type: 'error', text: 'هیچ مقداری وارد نشده' });
+        setSavingCred(false);
+        return;
+      }
+
+      const r = await fetch('/api/config/credentials', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      });
+      const d = await r.json();
+      if (d.ok) {
+        setCredFeedback({ type: 'success', text: '✅ ذخیره شد. سرور در ۱ ثانیه ری‌استارت می‌شود...' });
+        setCredToken('');
+        // Reload page after restart
+        setTimeout(() => {
+          fetchCredStatus();
+          onRefresh();
+        }, 5000);
+      } else {
+        setCredFeedback({ type: 'error', text: `❌ ${d.message || 'خطا در ذخیره'}` });
+      }
+    } catch (e: any) {
+      setCredFeedback({ type: 'error', text: `خطا: ${e.message}` });
+    } finally {
+      setSavingCred(false);
+    }
+  };
+
+  // ============================================================================
+  // Latency test
+  // ============================================================================
 
   const testServerLatency = async () => {
     setIsTestingLatency(true);
@@ -78,10 +148,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
     try {
       const response = await fetch(`/api/ping?_t=${Date.now()}`, {
         method: 'GET',
-        headers: {
-          'Cache-Control': 'no-cache, no-store',
-          'Pragma': 'no-cache',
-        },
+        headers: { 'Cache-Control': 'no-cache, no-store', 'Pragma': 'no-cache' },
         signal: controller.signal,
       });
       clearTimeout(timeoutId);
@@ -121,7 +188,6 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
     }
   };
 
-  // Perform initial latency check on component mount
   useEffect(() => {
     testServerLatency();
   }, []);
@@ -148,7 +214,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
       if (res?.ok) {
         setFeedback({
           type: 'success',
-          message: '⚡ سرویس اتصال مستقیم (Long Polling) فعال شد. اکنون ربات با حداکثر سرعت و بدون نیاز به وب‌هوک به پیام‌های تلگرام پاسخ می‌دهد!',
+          message: '⚡ سرویس اتصال مستقیم (Long Polling) فعال شد. اکنون ربات با حداکثر سرعت پاسخ می‌دهد!',
         });
         onRefresh();
       }
@@ -226,7 +292,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
 
   return (
     <div className="space-y-6">
-      
+
       {/* Active Mode Banner */}
       <div
         className={`p-5 rounded-2xl border transition-all ${
@@ -260,7 +326,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               <div className="flex items-center gap-2">
                 <h3 className="font-bold text-base text-white">
                   {isPollingActive
-                    ? '⚡ اتصال مستقیم تلگرام فعال است (پاسخ‌دهی آنی لحظه‌ای)'
+                    ? '⚡ اتصال مستقیم تلگرام فعال است'
                     : isWebhookActive
                     ? '🟢 اتصال وب‌هوک فعال است'
                     : '🟡 ربات در انتظار اتصال'}
@@ -273,7 +339,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               </div>
               <p className="text-xs opacity-90 mt-0.5">
                 {isPollingActive
-                  ? 'سرور به صورت پیوسته پیام‌های ارسالی کاربران در تلگرام را دریافت و فوراً پردازش و پاسخ ارسال می‌کند.'
+                  ? 'سرور به صورت پیوسته پیام‌ها را دریافت و پردازش می‌کند.'
                   : isWebhookActive
                   ? `وبهوک فعال روی: ${currentUrl}`
                   : 'برای پاسخ‌دهی خودکار دکمه "فعال‌سازی اتصال مستقیم" را بزنید.'}
@@ -282,12 +348,11 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
           </div>
 
           <div className="flex items-center gap-2 self-end sm:self-center">
-            {/* Quick Latency Test Button with Colored Indicator */}
             <button
               type="button"
               onClick={testServerLatency}
               disabled={isTestingLatency}
-              title="تست در لحظه تاخیر سرور با Fetch API"
+              title="تست تاخیر سرور"
               className={`px-3 py-2 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all active:scale-95 ${
                 latencyResult?.status === 'connected'
                   ? 'bg-emerald-500/15 hover:bg-emerald-500/25 text-emerald-300 border-emerald-500/30 shadow-sm'
@@ -336,7 +401,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
         {lastError && !isPollingActive && (
           <div className="mt-3 pt-3 border-t border-rose-500/20 text-rose-300 text-xs flex items-center gap-2">
             <AlertCircle className="w-4 h-4 text-rose-400 shrink-0" />
-            <span>آخرین پیام خطای وبهوک تلگرام: {lastError}</span>
+            <span>آخرین خطای وبهوک: {lastError}</span>
           </div>
         )}
 
@@ -352,7 +417,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               className="px-3 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 text-amber-200 border border-amber-500/30 text-[11px] font-bold flex items-center gap-1 transition-all"
             >
               <RefreshCw className={`w-3 h-3 ${pollingLoading ? 'animate-spin' : ''}`} />
-              <span>رفع تداخل و راه‌اندازی مجدد</span>
+              <span>راه‌اندازی مجدد</span>
             </button>
           </div>
         )}
@@ -370,26 +435,128 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
         </div>
       )}
 
+      {/* ===================================================================== */}
+      {/* NEW: Bot Credentials Configuration Card                              */}
+      {/* ===================================================================== */}
+      <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
+        <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+          <div className="flex items-center gap-2">
+            <Key className="w-5 h-5 text-amber-400" />
+            <h2 className="font-bold text-sm text-white">توکن رسمی و آیدی ادمین</h2>
+          </div>
+          <span
+            className={`text-[10px] px-2 py-0.5 rounded-full font-bold ${
+              credHasToken
+                ? 'bg-emerald-500/20 text-emerald-400 border border-emerald-500/30'
+                : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+            }`}
+          >
+            {credHasToken ? '🟢 توکن ست شده' : '🔴 توکن ندارد'}
+          </span>
+        </div>
+
+        {credFeedback && (
+          <div
+            className={`p-3 rounded-xl text-xs border ${
+              credFeedback.type === 'success'
+                ? 'bg-emerald-950/30 border-emerald-500/40 text-emerald-200'
+                : 'bg-rose-950/30 border-rose-500/40 text-rose-200'
+            }`}
+          >
+            {credFeedback.text}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          {credMasked && (
+            <div className="p-2.5 rounded-lg bg-slate-950 border border-slate-800 text-[11px] font-mono text-slate-400">
+              <span className="text-slate-500">توکن فعلی: </span>
+              <span className="text-cyan-300">{credMasked}</span>
+            </div>
+          )}
+
+          {/* Bot Token input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-300 block">
+              توکن جدید ربات (از @BotFather):
+            </label>
+            <input
+              type="text"
+              value={credToken}
+              onChange={(e) => setCredToken(e.target.value)}
+              placeholder="123456789:AAxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              dir="ltr"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono focus:border-cyan-500 focus:outline-none"
+            />
+            <p className="text-[10px] text-slate-500">
+              اگه می‌خوای توکن فعلی بمونه، این فیلد رو خالی بذار.
+            </p>
+          </div>
+
+          {/* Admin ID input */}
+          <div className="space-y-1.5">
+            <label className="text-xs font-bold text-slate-300 block">
+              آیدی عددی ادمین (از @userinfobot):
+            </label>
+            <input
+              type="text"
+              value={credAdminId}
+              onChange={(e) => setCredAdminId(e.target.value)}
+              placeholder="123456789"
+              dir="ltr"
+              className="w-full px-3.5 py-2.5 rounded-xl bg-slate-950 border border-slate-700 text-slate-100 text-xs font-mono focus:border-cyan-500 focus:outline-none"
+            />
+            <p className="text-[10px] text-slate-500">
+              فقط عدد، بدون @ یا فاصله
+            </p>
+          </div>
+
+          {/* Save Button */}
+          <button
+            onClick={handleSaveCredentials}
+            disabled={savingCred || (!credToken.trim() && !credAdminId.trim())}
+            className="w-full py-2.5 rounded-xl bg-gradient-to-r from-emerald-500 to-teal-600 hover:from-emerald-400 hover:to-teal-500 text-white text-xs font-bold flex items-center justify-center gap-2 shadow-lg shadow-emerald-600/20 active:scale-95 transition-all disabled:opacity-40"
+          >
+            {savingCred ? (
+              <>
+                <RefreshCw className="w-4 h-4 animate-spin" />
+                <span>در حال ذخیره...</span>
+              </>
+            ) : (
+              <>
+                <CheckCircle className="w-4 h-4" />
+                <span>💾 ذخیره و ری‌استارت ربات</span>
+              </>
+            )}
+          </button>
+
+          <p className="text-[10px] text-slate-500 text-center leading-relaxed">
+            ⚠️ توکن به‌صورت امن در <code className="text-cyan-400">.env</code> سرور ذخیره می‌شود.
+            هیچ‌وقت به مرورگر برنمی‌گردد.
+          </p>
+        </div>
+      </div>
+
       {/* Main Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        
+
         {/* Left 2 Cols: Controls */}
         <div className="lg:col-span-2 space-y-5">
-          
-          {/* Method 1: Direct Real-Time Polling (Recommended) */}
+
+          {/* Method 1: Polling */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
                 <Zap className="w-5 h-5 text-cyan-400" />
-                <h2 className="font-bold text-sm text-white">اتصال مستقیم تلگرام (Long Polling - روش پیشنهادی)</h2>
+                <h2 className="font-bold text-sm text-white">اتصال مستقیم (Long Polling)</h2>
               </div>
               <span className="text-xs px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-400 border border-cyan-500/20">
-                پایدار و سریع
+                پایدار
               </span>
             </div>
 
             <p className="text-xs text-slate-300 leading-relaxed">
-              این روش پیام‌های جدید را مستقیماً از سرورهای تلگرام خوانده و فوراً قیمت طلا، بیت‌کوین و محاسبات را به کاربر پاسخ می‌دهد؛ نیازی به باز بودن پورت خارجی یا دامنه HTTPS عمومی ندارد.
+              این روش پیام‌ها را مستقیماً از سرورهای تلگرام خوانده و فوراً پاسخ می‌دهد؛ نیازی به دامنه HTTPS عمومی ندارد.
             </p>
 
             <div className="flex items-center gap-3 pt-2">
@@ -408,13 +575,13 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                     ? 'در حال تغییر وضعیت...'
                     : isPollingActive
                     ? 'توقف اتصال مستقیم'
-                    : 'شروع اتصال مستقیم لحظه‌ای (Start Polling)'}
+                    : 'شروع اتصال مستقیم (Start Polling)'}
                 </span>
               </button>
             </div>
           </div>
 
-          {/* Method 2: Webhook Mode */}
+          {/* Method 2: Webhook */}
           <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div className="flex items-center gap-2">
@@ -429,7 +596,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                 <span>آدرس سرور برای دریافت آپدیت‌ها:</span>
                 <span className="text-[11px] text-cyan-400 font-mono">HTTPS</span>
               </label>
-              
+
               <div className="relative">
                 <input
                   type="text"
@@ -459,7 +626,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                 className="w-4 h-4 rounded bg-slate-950 border-slate-700 text-cyan-500 focus:ring-cyan-500"
               />
               <label htmlFor="dropPending2" className="text-xs text-slate-300 cursor-pointer select-none">
-                صرف‌نظر از پیام‌های قدیمی در صف (Drop Pending Updates)
+                صرف‌نظر از پیام‌های قدیمی در صف
               </label>
             </div>
 
@@ -470,7 +637,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                 className="flex-1 py-2.5 px-4 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-100 text-xs font-bold flex items-center justify-center gap-2 transition-all"
               >
                 <Link2 className={`w-4 h-4 ${settingWebhook ? 'animate-spin' : ''}`} />
-                <span>{settingWebhook ? 'در حال ثبت...' : 'ست کردن وب‌هوک (Set Webhook)'}</span>
+                <span>{settingWebhook ? 'در حال ثبت...' : 'ست کردن وب‌هوک'}</span>
               </button>
 
               <button
@@ -484,40 +651,12 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
             </div>
           </div>
 
-          {/* Token Card */}
-          <div className="bg-slate-900/90 border border-slate-800 rounded-2xl p-5 shadow-xl space-y-4">
-            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
-              <div className="flex items-center gap-2">
-                <Key className="w-5 h-5 text-amber-400" />
-                <h2 className="font-bold text-sm text-white">توکن رسمی و یکتای ربات تلگرام</h2>
-              </div>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 font-bold">
-                تک توکن رسمی (@Modasr_Arzbot)
-              </span>
-            </div>
-
-            <div className="space-y-2">
-              <input
-                type="text"
-                value={activeToken}
-                onChange={(e) => setActiveToken(e.target.value)}
-                dir="ltr"
-                className="w-full px-3.5 py-2 rounded-xl bg-slate-950 border border-slate-700 text-slate-200 text-xs font-mono focus:border-cyan-500 focus:outline-none"
-              />
-            </div>
-
-            <div className="flex items-center gap-2 pt-1 text-xs text-slate-400">
-              <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
-              <span>توکن فعال در سرور: <code className="text-cyan-300 font-mono">{activeToken ? `${activeToken.substring(0, 10)}...` : 'تنظیم نشده (وارد شده در فایل .env)'}</code></span>
-            </div>
-          </div>
-
         </div>
 
-        {/* Right 1 Col: Latency Test & Bot Details */}
+        {/* Right 1 Col: Latency & Bot Details */}
         <div className="space-y-5">
 
-          {/* Real-Time Latency & Server Connection Test Card */}
+          {/* Latency Card */}
           <div
             className={`border rounded-2xl p-5 shadow-xl transition-all space-y-4 ${
               isWhite ? 'bg-white border-neutral-200 text-black' : 'bg-slate-900/90 border-slate-800 text-white'
@@ -526,10 +665,9 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
             <div className="flex items-center justify-between border-b pb-3 border-inherit">
               <div className="flex items-center gap-2">
                 <Activity className="w-5 h-5 text-cyan-400" />
-                <h2 className="font-bold text-sm">تست در لحظه وضعیت اتصال سرور</h2>
+                <h2 className="font-bold text-sm">تست وضعیت اتصال سرور</h2>
               </div>
-              
-              {/* Colored Indicator (سبز / قرمز) */}
+
               <div className="flex items-center gap-2">
                 {isTestingLatency ? (
                   <span className="flex items-center gap-1.5 px-2 py-0.5 rounded-full text-[11px] font-bold bg-amber-500/10 text-amber-400 border border-amber-500/30">
@@ -557,7 +695,7 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                           : 'bg-rose-500/15 text-rose-400 border-rose-500/30'
                       }`}
                     >
-                      {latencyResult.status === 'connected' ? '🟢 متصل (سبز)' : '🔴 خطا (قرمز)'}
+                      {latencyResult.status === 'connected' ? '🟢 متصل' : '🔴 خطا'}
                     </span>
                   </div>
                 ) : (
@@ -566,11 +704,6 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               </div>
             </div>
 
-            <p className={`text-xs leading-relaxed ${isWhite ? 'text-neutral-600' : 'text-slate-300'}`}>
-              سنجش زنده و آنی تاخیر پاسخ‌دهی سرور (Latency) با استفاده از <strong>Fetch API</strong> و محاسبه رفت‌وبرگشت میلی‌ثانیه‌ای به اندپوینت سلامت:
-            </p>
-
-            {/* Test Button with Fetch API */}
             <button
               type="button"
               onClick={testServerLatency}
@@ -582,14 +715,9 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
               }`}
             >
               <Activity className={`w-4 h-4 ${isTestingLatency ? 'animate-spin' : ''}`} />
-              <span>
-                {isTestingLatency
-                  ? 'در حال سنجش تاخیر با Fetch API...'
-                  : 'تست در لحظه اتصال سرور (Ping Latency)'}
-              </span>
+              <span>{isTestingLatency ? 'در حال سنجش...' : 'تست در لحظه اتصال سرور'}</span>
             </button>
 
-            {/* Latency Result Display Box */}
             {latencyResult && (
               <div
                 className={`p-3.5 rounded-xl border transition-all ${
@@ -602,76 +730,47 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                     : 'bg-rose-950/25 border-rose-500/30 text-rose-200'
                 }`}
               >
-                {/* Latency Counter & Speed Tag */}
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-inherit">
                   <div className="flex items-center gap-2">
                     <Gauge className={`w-4 h-4 ${latencyResult.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'}`} />
-                    <span className="text-xs font-semibold">تاخیر سرور (Latency):</span>
+                    <span className="text-xs font-semibold">تاخیر:</span>
                   </div>
-                  <div className="flex items-center gap-1.5">
-                    <span
-                      className={`font-mono text-base font-extrabold ${
-                        latencyResult.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'
-                      }`}
-                    >
-                      {latencyResult.latencyMs} ms
-                    </span>
-                    {latencyResult.status === 'connected' && (
-                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-bold">
-                        {latencyResult.latencyMs < 80
-                          ? 'عالی ⚡'
-                          : latencyResult.latencyMs < 250
-                          ? 'بسیار خوب'
-                          : 'معمولی'}
-                      </span>
-                    )}
-                  </div>
+                  <span className={`font-mono text-base font-extrabold ${latencyResult.status === 'connected' ? 'text-emerald-400' : 'text-rose-400'}`}>
+                    {latencyResult.latencyMs} ms
+                  </span>
                 </div>
 
-                {/* Technical Metric Specs */}
                 <div className="space-y-1.5 text-[11px]">
                   <div className="flex justify-between">
-                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت نشانگر:</span>
-                    <span className="font-bold flex items-center gap-1">
-                      <span
-                        className={`inline-block w-2.5 h-2.5 rounded-full ${
-                          latencyResult.status === 'connected' ? 'bg-emerald-500' : 'bg-rose-500'
-                        }`}
-                      />
-                      {latencyResult.status === 'connected' ? 'سبز (ارتباط سالم و پایدار)' : 'قرمز (خطای دسترسی)'}
+                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت:</span>
+                    <span className="font-bold">
+                      {latencyResult.status === 'connected' ? '🟢 سالم' : '🔴 خطا'}
                     </span>
-                  </div>
-
-                  <div className="flex justify-between">
-                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>پروتکل بررسی:</span>
-                    <span className="font-mono text-cyan-400">Fetch API (/api/ping)</span>
                   </div>
 
                   {latencyResult.httpStatus && (
                     <div className="flex justify-between">
-                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>کد پاسخ HTTP:</span>
-                      <span className="font-mono font-bold text-emerald-400">
-                        {latencyResult.httpStatus} OK
-                      </span>
+                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>HTTP:</span>
+                      <span className="font-mono font-bold text-emerald-400">{latencyResult.httpStatus} OK</span>
                     </div>
                   )}
 
                   {latencyResult.uptime !== undefined && (
                     <div className="flex justify-between">
-                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>آپ‌تایم فعال سرور:</span>
-                      <span className="font-mono text-slate-300">
+                      <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>آپ‌تایم:</span>
+                      <span className="font-mono">
                         {Math.floor(latencyResult.uptime / 60)} دقیقه و {latencyResult.uptime % 60} ثانیه
                       </span>
                     </div>
                   )}
 
                   <div className="flex justify-between">
-                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>زمان آخرین تست:</span>
-                    <span className="font-mono text-slate-300">{latencyResult.testedAt}</span>
+                    <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>زمان تست:</span>
+                    <span className="font-mono">{latencyResult.testedAt}</span>
                   </div>
 
                   {latencyResult.errorMessage && (
-                    <div className="pt-1.5 text-rose-300 text-[11px] font-medium border-t border-rose-500/20">
+                    <div className="pt-1.5 text-rose-300 text-[11px] border-t border-rose-500/20">
                       ⚠️ {latencyResult.errorMessage}
                     </div>
                   )}
@@ -699,15 +798,15 @@ export const WebhookPanel: React.FC<WebhookPanelProps> = ({
                 <span className="font-mono text-cyan-400 dir-ltr">{statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : '@Bot'}</span>
               </div>
               <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
-                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه عددی (Bot ID):</span>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه عددی:</span>
                 <span className="font-mono">{statusData?.botInfo?.result?.id || '—'}</span>
               </div>
               <div className={`flex justify-between py-1.5 border-b ${isWhite ? 'border-neutral-100' : 'border-slate-800/60'}`}>
-                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه مالک (Admin ID):</span>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>شناسه مالک:</span>
                 <span className="font-mono text-amber-400">{statusData?.currentConfig?.adminId || 'تعریف نشده'}</span>
               </div>
               <div className="flex justify-between py-1.5">
-                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت اتصال:</span>
+                <span className={isWhite ? 'text-neutral-500' : 'text-slate-400'}>وضعیت:</span>
                 <span className="text-emerald-400 font-semibold">
                   {isPollingActive ? '⚡ لحظه‌ای (Polling)' : isWebhookActive ? '🟢 وب‌هوک' : 'در انتظار'}
                 </span>
