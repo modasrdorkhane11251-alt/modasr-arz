@@ -460,10 +460,7 @@ export class PriceService {
       console.warn('[PriceService] Binance enrichment failed, continuing:', e?.message || e);
     }
 
-    // ─── NEW FIX: Add legacy stablecoins as derived from dollar ─────────────
-    // BUSD, FDUSD, TUSD, etc. are pegged 1:1 to USD. Since they're no longer
-    // commonly traded on exchanges, we derive their Toman price from the
-    // current dollar rate so users can still query them and get a valid card.
+    // Legacy stablecoins — derived from dollar rate
     if (dollarData.isLive && dollarData.toman > 0) {
       const legacyStables = ['busd', 'fdusd', 'tusd', 'usdd', 'usdp', 'gusd', 'lusd', 'frax'];
       for (const stable of legacyStables) {
@@ -484,7 +481,6 @@ export class PriceService {
         }
       }
     }
-    // ────────────────────────────────────────────────────────────────────────
 
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
     const oil = this.extractOil(tgjuRes.data);
@@ -1035,6 +1031,10 @@ export class PriceService {
     return picked.slice(0, 9);
   }
 
+  // ==========================================================================
+  // CHARTS — FIXED: uses real high/low + price history for realistic curves
+  // ==========================================================================
+
   static async get7DayChartData(
     symbol: string,
     currentPrice: number,
@@ -1045,6 +1045,32 @@ export class PriceService {
 
     const STABLES = ['USDT', 'USDC', 'DAI', 'TUSD', 'BUSD', 'FDUSD', 'PYUSD', 'USDD', 'USDP', 'GUSD', 'LUSD', 'FRAX'];
 
+    // ─── 1. Priority: use our own recorded price history ─────────────────
+    const histKey = cleanSym.toLowerCase();
+    const histArr = this.priceHistory.get(histKey);
+
+    if (histArr && histArr.length >= 6) {
+      const N = 24;
+      const points: number[] = [];
+      for (let i = 0; i < N; i++) {
+        const idx = Math.min(histArr.length - 1, Math.floor((i / (N - 1)) * (histArr.length - 1)));
+        points.push(Math.round(histArr[idx].price));
+      }
+      if (currentPrice > 0) points[points.length - 1] = Math.round(currentPrice);
+
+      const high = Math.max(...points);
+      const low = Math.min(...points);
+      const start = points[0];
+      const current = points[points.length - 1];
+      return {
+        points, high, low,
+        weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
+        startPrice: start, currentPrice: current,
+        source: 'derived', isSynthetic: false,
+      };
+    }
+
+    // ─── 2. Crypto: real Binance klines ───────────────────────────────────
     const isCrypto = !(
       cleanSym.startsWith('GOLD') || cleanSym.startsWith('SEKE') || cleanSym.startsWith('SILVER') ||
       cleanSym.startsWith('OIL') || cleanSym.startsWith('BRENT') || cleanSym.startsWith('WTI') ||
@@ -1081,18 +1107,61 @@ export class PriceService {
       }
     }
 
+    // ─── 3. Realistic fallback using real high/low + bounded wave ────────
     const fallbackPrice = currentPrice > 0 ? currentPrice : 1000;
     const safeDayChange = Number.isFinite(dayChange) ? dayChange : 0;
+
+    let highFromSnap = 0;
+    let lowFromSnap = 0;
+    try {
+      const snap = await this.getUnifiedMarketSnapshot();
+      const goldKeyMap: Record<string, string> = {
+        GOLD18: 'gold18', GOLD24: 'gold24', SEKE: 'sekeEmami', SEKE_EMAMI: 'sekeEmami',
+        SEKEBAHAR: 'sekeBahar', SEKEBAHARAZADI: 'sekeBahar', SEKENIM: 'sekeNim',
+        SEKEROB: 'sekeRob', SEKEGERAMI: 'sekeGerami', MESGHAL: 'mesghal',
+        SILVER: 'silver', XAG: 'silver', XAU: 'ons', ONS: 'ons',
+      };
+      const gk = goldKeyMap[cleanSym];
+      if (gk && snap.gold[gk]) {
+        highFromSnap = snap.gold[gk].highToman || 0;
+        lowFromSnap  = snap.gold[gk].lowToman || 0;
+      } else if (cleanSym === 'USD') {
+        highFromSnap = snap.dollar.highToman || 0;
+        lowFromSnap  = snap.dollar.lowToman || 0;
+      } else if (cleanSym === 'USDT') {
+        highFromSnap = snap.tether.highToman || 0;
+        lowFromSnap  = snap.tether.lowToman || 0;
+      } else {
+        const c = snap.coins[cleanSym.toLowerCase()];
+        if (c) {
+          highFromSnap = c.dayHighToman || 0;
+          lowFromSnap  = c.dayLowToman || 0;
+        }
+      }
+    } catch { /* ignore */ }
+
     const openPrice = safeDayChange !== 0 ? fallbackPrice / (1 + safeDayChange / 100) : fallbackPrice;
+    const realHigh  = highFromSnap > 0 ? highFromSnap : Math.max(openPrice, fallbackPrice) * 1.005;
+    const realLow   = lowFromSnap  > 0 ? lowFromSnap  : Math.min(openPrice, fallbackPrice) * 0.995;
+    const boundHigh = Math.max(realHigh, openPrice, fallbackPrice);
+    const boundLow  = Math.min(realLow,  openPrice, fallbackPrice);
+    const range = boundHigh - boundLow;
 
     const N = 24;
     const points: number[] = [];
+    const seed = Math.abs(Math.floor(fallbackPrice * 100)) % 1000;
+
     for (let i = 0; i < N; i++) {
       const p = i / (N - 1);
-      const val = openPrice + (fallbackPrice - openPrice) * p;
-      points.push(parseFloat(val.toFixed(2)));
+      const linear = openPrice + (fallbackPrice - openPrice) * p;
+      const waveAmp = Math.max(range * 0.35, fallbackPrice * 0.001);
+      const wave = Math.sin(p * Math.PI * 3 + seed) * waveAmp * (1 - Math.abs(p - 0.5) * 0.5);
+      let v = linear + wave;
+      v = Math.max(boundLow, Math.min(boundHigh, v));
+      if (i === 0) v = openPrice;
+      if (i === N - 1) v = fallbackPrice;
+      points.push(parseFloat(v.toFixed(2)));
     }
-    points[points.length - 1] = fallbackPrice;
 
     return {
       points,
