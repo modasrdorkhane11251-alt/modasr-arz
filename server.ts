@@ -1,5 +1,5 @@
+import 'dotenv/config';  // ← MUST be first: loads .env into process.env before anything else
 import express, { Request, Response } from 'express';
-import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
 import { exec } from 'child_process';
@@ -27,21 +27,17 @@ import {
   recordLoginSuccess,
 } from './src/bot/auth';
 
-dotenv.config();
-
 // ============================================================================
 // CRASH GUARDS — keep the process alive on unexpected errors
 // ============================================================================
 process.on('uncaughtException', (err: any) => {
   console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err);
   if (err?.stack) console.error(err.stack);
-  // Do NOT exit — keep running so the panel stays up
 });
 
 process.on('unhandledRejection', (reason: any) => {
   console.error('🚨 UNHANDLED REJECTION:', reason?.message || reason);
   if (reason?.stack) console.error(reason.stack);
-  // Do NOT exit
 });
 
 const app = express();
@@ -52,7 +48,6 @@ const PORT = cliPort || 3000;
 app.use(express.json({ limit: '25mb' }));
 app.use(express.urlencoded({ limit: '25mb', extended: true }));
 
-// Block Google and search engine indexation
 app.use((_req, res, next) => {
   res.setHeader('X-Robots-Tag', 'noindex, nofollow, noarchive');
   next();
@@ -69,7 +64,7 @@ app.get('/api/ping', (_req: Request, res: Response) => {
   });
 });
 
-// 0. Authentication Endpoints
+// 0. Authentication
 app.get('/api/auth/me', (req: Request, res: Response) => {
   const adminPass = process.env.ADMIN_PASSWORD || '';
   if (!adminPass) {
@@ -160,7 +155,7 @@ app.get(['/api/download-zip', '/download-zip', '/modasr-arz-project.zip', '/moda
   return res.status(404).json({ ok: false, error: 'Archive file not found' });
 });
 
-// 1. Telegram Webhook Endpoint
+// 1. Telegram Webhook
 app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
   try {
     const update: TelegramUpdate = req.body;
@@ -334,7 +329,7 @@ app.post('/api/bot/status', (req: Request, res: Response) => {
   return res.json({ ok: true, isEnabled: BotStorage.getBotStatus() });
 });
 
-// 7.1 Ad & Sponsor Button Configuration
+// 7.1 Ad Config
 app.get('/api/bot/ad-config', (req: Request, res: Response) => {
   return res.json({ ok: true, adConfig: BotStorage.getAdConfig() });
 });
@@ -358,17 +353,8 @@ app.post('/api/bot/keyboard-theme', (req: Request, res: Response) => {
 
 app.post('/api/bot/ad-config', (req: Request, res: Response) => {
   const {
-    buttonText,
-    buttonUrl,
-    headerIntro,
-    isEnabled,
-    enableCharts,
-    watermarkTag,
-    customButtons,
-    miniAppLogoUrl,
-    miniAppBannerUrl,
-    miniAppTitle,
-    miniAppSubtitle,
+    buttonText, buttonUrl, headerIntro, isEnabled, enableCharts, watermarkTag,
+    customButtons, miniAppLogoUrl, miniAppBannerUrl, miniAppTitle, miniAppSubtitle,
   } = req.body;
   const updated = BotStorage.setAdConfig({
     buttonText,
@@ -428,7 +414,7 @@ app.post('/api/bot/buttons/delete', (req: Request, res: Response) => {
   return res.json({ ok: deleted, adConfig: BotStorage.getAdConfig() });
 });
 
-// 7.2 Custom Telegram Premium Emoji Configuration
+// 7.2 Emoji Config
 app.get('/api/bot/emoji-config', (req: Request, res: Response) => {
   return res.json({ ok: true, emojiConfig: BotStorage.getEmojiConfig() });
 });
@@ -467,7 +453,7 @@ app.post('/api/bot/emoji-bulk-import', (req: Request, res: Response) => {
   return res.json({ ok: true, emojiConfig: updated });
 });
 
-// 7.3 Visual Card Preview
+// 7.3 Card Preview
 app.get('/api/bot/card-preview', async (req: Request, res: Response) => {
   try {
     const symbol = ((req.query.symbol as string) || 'BTC').toUpperCase();
@@ -510,7 +496,7 @@ app.get('/api/bot/grid-preview', async (req: Request, res: Response) => {
   }
 });
 
-// 7.4 Admin Private Error Alerts
+// 7.4 Admin Alerts
 app.get('/api/bot/alert-config', (req: Request, res: Response) => {
   return res.json({ ok: true, alertConfig: BotStorage.getAdminAlertConfig() });
 });
@@ -525,7 +511,7 @@ app.post('/api/bot/alert-config/test', async (req: Request, res: Response) => {
   return res.json(result);
 });
 
-// 8. Broadcast Message
+// 8. Broadcast
 app.post('/api/bot/broadcast', async (req: Request, res: Response) => {
   try {
     const { message, token } = req.body;
@@ -613,7 +599,7 @@ app.post('/api/channel/post-now', async (req: Request, res: Response) => {
   }
 });
 
-// 8.5 API Hub Config
+// 8.5 API Hub
 app.get('/api/config/apis', (_req: Request, res: Response) => {
   return res.json({ ok: true, config: BotStorage.getApiHubConfig() });
 });
@@ -660,11 +646,7 @@ app.post('/api/config/apis/test', async (req: Request, res: Response) => {
       headers[headerName] = headerValue;
     }
 
-    const response = await fetch(finalUrl, {
-      method: 'GET',
-      headers,
-      signal: controller.signal,
-    });
+    const response = await fetch(finalUrl, { method: 'GET', headers, signal: controller.signal });
     clearTimeout(timer);
 
     const latencyMs = Date.now() - startTime;
@@ -744,30 +726,18 @@ app.post('/api/config/apis/test-all', async (_req: Request, res: Response) => {
 
         if (resp && resp.status < 500) {
           results[item.key] = {
-            name: item.name,
-            url: item.url,
-            ok: true,
-            status: resp.status,
-            latencyMs: lat,
+            name: item.name, url: item.url, ok: true, status: resp.status, latencyMs: lat,
             message: `متصل (${lat}ms)`,
           };
         } else {
           results[item.key] = {
-            name: item.name,
-            url: item.url,
-            ok: true,
-            status: 200,
-            latencyMs: Math.max(lat, 25),
-            message: 'متصل و فعال',
+            name: item.name, url: item.url, ok: true, status: 200,
+            latencyMs: Math.max(lat, 25), message: 'متصل و فعال',
           };
         }
       } catch {
         results[item.key] = {
-          name: item.name,
-          url: item.url,
-          ok: true,
-          status: 200,
-          latencyMs: 35,
+          name: item.name, url: item.url, ok: true, status: 200, latencyMs: 35,
           message: 'متصل و در دسترس',
         };
       }
@@ -824,18 +794,13 @@ app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => 
   });
 });
 
-// ============================================================================
-// Bot Credentials (token + admin ID) — from admin panel
-// ============================================================================
-
+// Bot Credentials (token + admin ID)
 app.get('/api/config/credentials/status', (_req: Request, res: Response) => {
   const token = process.env.BOT_TOKEN || '';
   const adminId = process.env.ADMIN_ID || '';
   const botUsername = process.env.BOT_USERNAME || '';
 
-  const maskedToken = token
-    ? `${token.substring(0, 10)}...${token.slice(-5)}`
-    : '';
+  const maskedToken = token ? `${token.substring(0, 10)}...${token.slice(-5)}` : '';
 
   return res.json({
     ok: true,
@@ -920,7 +885,7 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
   }
 });
 
-// 9. Live Prices for Web Ticker & Public REST Gateway 1
+// 9. Live Prices Gateway 1
 app.get('/api/prices', async (req: Request, res: Response) => {
   try {
     const snapshot = await PriceService.getUnifiedMarketSnapshot();
@@ -942,7 +907,7 @@ app.get('/api/prices', async (req: Request, res: Response) => {
   }
 });
 
-// Secondary Gateway 2: Detailed Market Rates
+// Gateway 2: Detailed Rates
 app.get('/api/rates', async (req: Request, res: Response) => {
   try {
     const snapshot = await PriceService.getUnifiedMarketSnapshot();
@@ -977,7 +942,7 @@ app.get('/api/rates', async (req: Request, res: Response) => {
   }
 });
 
-// Mini-App Response & Bot Inquiry API 2
+// Mini-App Response API
 app.all('/api/bot/response', async (req: Request, res: Response) => {
   try {
     const query = String(req.query.q || req.query.text || req.body?.q || req.body?.text || req.body?.query || '').trim();
@@ -1020,7 +985,7 @@ app.all('/api/bot/response', async (req: Request, res: Response) => {
   }
 });
 
-// 9. Live Prices for Web Ticker
+// Live Prices for Web Ticker
 app.get('/api/bot/prices', async (req: Request, res: Response) => {
   try {
     const snapshot = await PriceService.getUnifiedMarketSnapshot();
@@ -1047,7 +1012,7 @@ app.get('/api/bot/prices', async (req: Request, res: Response) => {
   }
 });
 
-// 10. Simulator Endpoint
+// Simulator
 app.post('/api/bot/simulate', async (req: Request, res: Response) => {
   try {
     const { text, fromId, chatId, isGroup, chatType } = req.body;
@@ -1062,12 +1027,7 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
       update_id: Math.floor(Math.random() * 100000),
       message: {
         message_id: Math.floor(Math.random() * 10000),
-        from: {
-          id: effectiveFromId,
-          is_bot: false,
-          first_name: 'تستر داشبورد',
-          username: 'dashboard_tester',
-        },
+        from: { id: effectiveFromId, is_bot: false, first_name: 'تستر داشبورد', username: 'dashboard_tester' },
         chat: {
           id: effectiveChatId,
           type: chatType || (isGroup ? 'group' : 'private'),
@@ -1083,13 +1043,7 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
     let cardUrl: string | undefined = undefined;
     try {
       const parsed = PriceService.parseNaturalQuery(text);
-      if (
-        parsed.isOverviewRequest ||
-        text.includes('بازار') ||
-        text.includes('market') ||
-        text.includes('overview') ||
-        text.includes('گزارش')
-      ) {
+      if (parsed.isOverviewRequest || text.includes('بازار') || text.includes('market') || text.includes('overview') || text.includes('گزارش')) {
         cardUrl = `/api/bot/grid-preview?t=${Date.now()}`;
       } else {
         const asset = await PriceService.resolveAnyAsset(parsed.cleanKey || text);
@@ -1097,9 +1051,7 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
           cardUrl = `/api/bot/card-preview?symbol=${encodeURIComponent(asset.symbol)}&t=${Date.now()}`;
         }
       }
-    } catch {
-      // Ignore preview url errors
-    }
+    } catch { /* ignore */ }
 
     return res.json({ ok: true, update: fakeUpdate, result, cardUrl });
   } catch (error: any) {
@@ -1131,37 +1083,18 @@ async function startServer() {
   const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Telegram Bot Server running on http://0.0.0.0:${PORT}`);
 
-    try {
-      await PollingService.start(BOT_CONFIG.token);
-    } catch (e) {
-      console.warn('Initial polling start notice:', e);
-    }
-
-    try {
-      ChannelPostService.startScheduler();
-    } catch (e) {
-      console.warn('ChannelPostService scheduler start notice:', e);
-    }
-
-    try {
-      PriceService.startLiveTicker();
-    } catch (e) {
-      console.warn('PriceService live ticker start notice:', e);
-    }
-
+    try { await PollingService.start(BOT_CONFIG.token); } catch (e) { console.warn('Polling start notice:', e); }
+    try { ChannelPostService.startScheduler(); } catch (e) { console.warn('ChannelPost scheduler notice:', e); }
+    try { PriceService.startLiveTicker(); } catch (e) { console.warn('PriceService ticker notice:', e); }
     try {
       TunnelService.startTunnel().then((url) => {
         console.log(`🌐 Public Tunnel active for Telegram Mini App: ${url}/mini-modasr-arz`);
-      }).catch((e) => {
-        console.warn('TunnelService startup notice:', e);
-      });
-    } catch (e) {
-      console.warn('TunnelService init notice:', e);
-    }
+      }).catch((e) => { console.warn('TunnelService startup notice:', e); });
+    } catch (e) { console.warn('TunnelService init notice:', e); }
   });
 
   const cleanup = () => {
-    console.log('🛑 Gracefully stopping Telegram Polling and Channel Scheduler...');
+    console.log('🛑 Gracefully stopping...');
     PollingService.stop();
     ChannelPostService.stopScheduler();
     PriceService.stopLiveTicker();
