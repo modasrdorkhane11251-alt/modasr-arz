@@ -7,16 +7,28 @@ import { StatsBroadcastPanel } from './components/StatsBroadcastPanel';
 import { ActivityLogsPanel } from './components/ActivityLogsPanel';
 import { MiniAppView } from './components/MiniAppView';
 import { MiniAppPreviewPanel } from './components/MiniAppPreviewPanel';
-import { detectMiniApp } from './lib/miniApp';
+import { ApiHubPanel } from './components/ApiHubPanel';
+import { DEFAULT_BOT_TOKEN } from './bot/config';
+import { useTheme } from './context/ThemeContext';
 
 export default function App() {
-  const isDirectMiniApp = detectMiniApp();
+  const { theme, isWhite } = useTheme();
+  const isDirectMiniApp = typeof window !== 'undefined' && (
+    window.location.pathname.includes('mini-modasr-arz') ||
+    window.location.pathname.startsWith('/miniapp') ||
+    window.location.pathname.startsWith('/app') ||
+    window.location.search.includes('view=miniapp') ||
+    window.location.search.includes('app=mini-modasr-arz') ||
+    window.location.search.includes('secret=mini-modasr-arz') ||
+    window.location.search.includes('tgWebApp') ||
+    Boolean((window as any).Telegram?.WebApp?.initData)
+  );
 
   const [activeTab, setActiveTab] = useState<string>(isDirectMiniApp ? 'miniapp-fullscreen' : 'webhook');
   const [statusData, setStatusData] = useState<any>(null);
   const [statsData, setStatsData] = useState<any>(null);
   const [pricesData, setPricesData] = useState<any>(null);
-  const [activeToken, setActiveToken] = useState<string>('');
+  const [activeToken, setActiveToken] = useState<string>(DEFAULT_BOT_TOKEN);
   const [loading, setLoading] = useState<boolean>(false);
 
   const fetchStatus = async () => {
@@ -65,13 +77,18 @@ export default function App() {
   };
 
   useEffect(() => {
-    if (isDirectMiniApp) return;
     refreshAll();
-    const interval = setInterval(() => {
+    // Live real-time price synchronization every 2 seconds
+    const priceInterval = setInterval(() => {
       fetchPrices();
+    }, 2000);
+    const statsInterval = setInterval(() => {
       fetchStats();
-    }, 15000);
-    return () => clearInterval(interval);
+    }, 5000);
+    return () => {
+      clearInterval(priceInterval);
+      clearInterval(statsInterval);
+    };
   }, [activeToken]);
 
   const handleSetWebhook = async (url: string, dropPending: boolean, token?: string) => {
@@ -158,7 +175,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex flex-col selection:bg-cyan-500 selection:text-white">
+    <div className={`min-h-screen ${isWhite ? 'bg-white text-black' : 'bg-slate-950 text-slate-100'} flex flex-col selection:bg-cyan-500 selection:text-white transition-colors duration-200`}>
       {/* Header */}
       <Header
         botInfo={statusData?.botInfo}
@@ -198,6 +215,7 @@ export default function App() {
             pricesData={pricesData}
             onRefreshPrices={fetchPrices}
             loading={loading}
+            onOpenApiHub={() => setActiveTab('apis')}
           />
         )}
 
@@ -206,6 +224,7 @@ export default function App() {
           <MiniAppPreviewPanel
             statusData={statusData}
             onOpenFullscreen={() => setActiveTab('miniapp-fullscreen')}
+            onOpenApiHub={() => setActiveTab('apis')}
           />
         )}
 
@@ -216,6 +235,7 @@ export default function App() {
             onRefreshStats={fetchStats}
             onToggleBotStatus={handleToggleBotStatus}
             onBroadcastMessage={handleBroadcastMessage}
+            onOpenApiHub={() => setActiveTab('apis')}
           />
         )}
 
@@ -228,13 +248,23 @@ export default function App() {
           />
         )}
 
+        {/* Tab 7: Comprehensive API Hub & Connections Manager */}
+        {activeTab === 'apis' && (
+          <ApiHubPanel
+            onRefreshPrices={fetchPrices}
+            onNavigateToTab={setActiveTab}
+          />
+        )}
+
       </main>
 
       {/* Footer */}
-      <footer className="border-t border-slate-900 bg-slate-950/60 py-6 text-center text-xs text-slate-500">
+      <footer className={`border-t ${isWhite ? 'border-neutral-200 bg-white text-neutral-700' : 'border-slate-900 bg-slate-950/60 text-slate-500'} py-6 text-center text-xs transition-colors duration-200`}>
         <div className="max-w-7xl mx-auto px-4 flex flex-col sm:flex-row items-center justify-between gap-2">
-          <span>سامانه و ربات هوشمند استعلام نرخ طلا، ارز و کریپتو</span>
-          <span className="font-mono text-slate-600">{statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : 'Modasr Arzbot'}</span>
+          <span className="font-medium">سامانه و ربات هوشمند استعلام نرخ طلا، ارز و کریپتو</span>
+          <span className={`font-mono ${isWhite ? 'text-neutral-900 font-bold' : 'text-slate-400'}`}>
+            {statusData?.botInfo?.result?.username ? `@${statusData.botInfo.result.username}` : 'Modasr Arzbot'}
+          </span>
         </div>
       </footer>
     </div>

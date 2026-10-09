@@ -6,10 +6,17 @@
     direction: rtl;
     background-color: #0b0f17;
     color: #f1f5f9;
+    transition: background-color 0.2s ease, color 0.2s ease;
   }
 }
 
-/* Custom Scrollbar */
+/* ==========================================================================
+   THEME STYLES & CONTRAST ENHANCEMENTS
+   1) White Mode (تک سفید با متن‌های سیاه): Crisp, high-contrast, bold, ultra-readable
+   2) Night Mode (حالت شب): Deep dark with glowing neon accents
+   ========================================================================== */
+
+/* Dark Mode Scrollbars */
 ::-webkit-scrollbar {
   width: 6px;
   height: 6px;
@@ -41,4 +48,218 @@
 .telegram-bubble-out {
   background-color: #0284c7;
   border-bottom-left-radius: 2px;
+}
+
+/* ==========================================================================
+   PURE WHITE MODE (تک سفید با متن‌های سیاه)
+   حداکثر خوانایی و کنتراست: متون کاملاً مشکی، مرزهای مشخص، بدون رنگ‌های کم‌رنگ
+   ========================================================================== */
+html[data-theme="white"],
+body.theme-white,
+.theme-white {
+  color-scheme: light;
+}
+
+body.theme-white {
+  background-color: #f8fafc !important;
+  color: #000000 !important;
+}
+
+/* White mode scrollbars */
+body.theme-white ::-webkit-scrollbar-track,
+.theme-white ::-webkit-scrollbar-track {
+  background: #f1f5f9 !important;
+}
+
+body.theme-white ::-webkit-scrollbar-thumb,
+.theme-white ::-webkit-scrollbar-thumb {
+  background: #94a3b8 !important;
+}
+
+body.theme-white ::-webkit-scrollbar-thumb:hover,
+.theme-white ::-webkit-scrollbar-thumb:hover {
+  background: #64748b !important;
+}
+
+/* Containers and surfaces in white mode */
+.theme-white .bg-slate-950,
+.theme-white .bg-slate-900,
+.theme-white .bg-\[\#070B14\],
+.theme-white .bg-\[\#0B0F17\],
+.theme-white .bg-\[\#0b0f17\],
+.theme-white .bg-\[\#0a0e1a\],
+.theme-white .bg-\[\#0D1322\] {
+  background-color: #ffffff !important;
+}
+
+.theme-white .bg-slate-950\/60,
+.theme-white .bg-slate-950\/70,
+.theme-white .bg-slate-950\/80,
+.theme-white .bg-slate-900\/80,
+.theme-white .bg-slate-900\/90,
+.theme-white .bg-slate-900\/95,
+.theme-white .bg-slate-900\/60,
+.theme-white .bg-\[\#070B14\]\/95,
+.theme-white .bg-\[\#070B14\]\/90 {
+  background-color: rgba(255, 255, 255, 0.98) !important;
+  backdrop-filter: blur(12px);
+}
+
+.theme-white .bg-slate-800,
+.theme-white .bg-slate-800\/40,
+.theme-white .bg-slate-800\/50,
+.theme-white .bg-slate-800\/60,
+.theme-white .bg-slate-800\/80 {
+  background-color: #f1f5f9 !important;
+}
+
+.theme-white .hover\:bg-slate-800:hover,
+.theme-white .hover\:bg-slate-700:hover,
+.theme-white .hover\:bg-slate-900\/80:hover {
+  background-color: #e2e8f0 !important;
+}
+
+/* ==========================================================================
+   HIGH-CONTRAST TYPOGRAPHY IN WHITE MODE (کاملاً خوانا و بدون رنگ پریدگی)
+   ========================================================================== */
+.theme-white h1,
+.theme-white h2,
+.theme-white h3,
+.theme-white h4,
+.theme-white h5,
+.theme-white h6 {
+  color: #000000 !important;
+}
+
+/* Surface text in white mode */
+.theme-white .text-slate-100,
+.theme-white .text-slate-200,
+.theme-white .text-slate-50 {
+  color: #000000;
+  font-weight: 700;
+}
+
+.theme-white .text-slate-300,
+.theme-white .text-slate-400 {
+  color: #0f172a;
+  font-weight: 600;
+}
+
+.theme-white .text-slate-500,
+.theme-white .text-slate-600 {
+  color: #334155;
+  font-weight: 500;
+}
+
+/* CRITICAL CONTRAST SAFEGUARD: Dark/gradient buttons and badges MUST RETAIN WHITE TEXT */
+.theme-white button[class*="bg-black"],
+.theme-white button[class*="bg-black"] *,
+.theme-white [class*="bg-black"] .text-white,
+.theme-white button[class*="bg-neutral-900"],
+.theme-white button[class*="bg-neutral-900"] *,
+.theme-white button[class*="bg-cyan-600"],
+.theme-white button[class*="bg-cyan-600"] *,
+.theme-white button[class*="bg-blue-600"],
+.theme-white button[class*="bg-blue-600"] *,
+.theme-white button[class*="bg-emerald-600"],
+.theme-white button[class*="bg-emerald-600"] *,
+.theme-white button[class*="bg-rose-600"],
+.theme-white button[class*="bg-rose-600"] *,
+.theme-white a[class*="bg-cyan-600"],
+.theme-white a[class*="bg-cyan-600"] *,
+.theme-white a[class*="bg-blue-600"],
+.theme-white a[class*="bg-blue-600"] *,
+.theme-white a[class*="bg-emerald-600"],
+.theme-white a[class*="bg-emerald-600"] *,
+.theme-white [class*="from-cyan-600"],
+.theme-white [class*="from-cyan-600"] *,
+.theme-white [class*="from-blue-600"],
+.theme-white [class*="from-blue-600"] * {
+  color: #ffffff !important;
+}
+
+/* Deep readable high-contrast accents (Never pale or invisible on white) */
+.theme-white .text-cyan-300,
+.theme-white .text-cyan-400 {
+  color: #0284c7 !important; /* Deep ocean cyan */
+  font-weight: 700;
+}
+
+.theme-white .text-amber-200,
+.theme-white .text-amber-300,
+.theme-white .text-amber-400 {
+  color: #b45309 !important; /* Deep warm bronze */
+  font-weight: 700;
+}
+
+.theme-white .text-emerald-300,
+.theme-white .text-emerald-400 {
+  color: #047857 !important; /* Deep forest green */
+  font-weight: 700;
+}
+
+.theme-white .text-purple-300,
+.theme-white .text-purple-400 {
+  color: #7e22ce !important; /* Deep violet */
+  font-weight: 700;
+}
+
+.theme-white .text-rose-300,
+.theme-white .text-rose-400 {
+  color: #be123c !important; /* Deep crimson */
+  font-weight: 700;
+}
+
+.theme-white .text-sky-300,
+.theme-white .text-sky-400 {
+  color: #0369a1 !important;
+  font-weight: 700;
+}
+
+/* Sharp visible borders for cards, boxes and tables */
+.theme-white .border-slate-800,
+.theme-white .border-slate-800\/80,
+.theme-white .border-slate-800\/60,
+.theme-white .border-slate-800\/90,
+.theme-white .border-slate-900,
+.theme-white .border-slate-900\/60,
+.theme-white .border-slate-700,
+.theme-white .border-slate-700\/50 {
+  border-color: #cbd5e1 !important;
+}
+
+/* Inputs and Forms in White Mode */
+.theme-white input:not([type="checkbox"]):not([type="radio"]),
+.theme-white textarea,
+.theme-white select {
+  background-color: #ffffff !important;
+  border-color: #94a3b8 !important;
+  color: #000000 !important;
+  font-weight: 600;
+}
+
+.theme-white input::placeholder,
+.theme-white textarea::placeholder {
+  color: #475569 !important;
+}
+
+/* Shadows and elevation in White Mode */
+.theme-white .shadow-2xl,
+.theme-white .shadow-xl {
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.08), 0 2px 4px -2px rgba(0, 0, 0, 0.04), 0 0 0 1px #e2e8f0 !important;
+}
+
+/* Telegram bubble contrast in white mode */
+.theme-white .telegram-bubble-in {
+  background-color: #f1f5f9 !important;
+  color: #000000 !important;
+  border: 1px solid #cbd5e1;
+}
+
+/* Subtle gradients adjusted for white backgrounds */
+.theme-white .from-slate-900,
+.theme-white .to-slate-900,
+.theme-white .via-slate-900 {
+  --tw-gradient-from: #ffffff var(--tw-gradient-from-position) !important;
+  --tw-gradient-to: #f8fafc var(--tw-gradient-to-position) !important;
 }
