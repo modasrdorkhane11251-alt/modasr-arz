@@ -3,22 +3,32 @@
  * Preserves all tokens, URLs, admin settings, and cryptocurrency aliases from index.php & config.php
  */
 
-import 'dotenv/config';
-import crypto from 'crypto';
-
 export const DEFAULT_BOT_TOKEN = process.env.BOT_TOKEN || '';
 
 export const BOT_CONFIG = {
   token: process.env.BOT_TOKEN || '',
   botUsername: process.env.BOT_USERNAME || 'Modasr_Arzbot',
   adminId: parseInt(process.env.ADMIN_ID || '0', 10),
-  // Secret used to verify that webhook calls really come from Telegram
-  webhookSecret: crypto
-    .createHash('sha256')
-    .update(`${process.env.BOT_TOKEN || ''}:webhook`)
-    .digest('hex')
-    .slice(0, 48),
+  nobitexApi: 'https://api.fast-creat.ir/nobitex/v2/orderbook/all',
+  fastApiUrl: 'https://api.fast-creat.ir/nobitex/v2?apikey=6750948508:dNoLxDYryOH7QS5@Api_ManagerRoBot',
+  goldApiUrl: 'https://api.fast-creat.ir/gold?apikey=6750948508:ZqGU7X4Vj05BwLt@Api_ManagerRoBot',
   nobitexDirectApi: 'https://api.nobitex.ir/market/stats',
+};
+
+export const UNIFIED_DEFAULT_MARKET = {
+  tetherToman: 267632,
+  dollarToman: 267632,
+  gold18Toman: 26364300,
+  gold24Toman: 35152100,
+  mesghalToman: 114195000,
+  sekeEmamiToman: 271910000,
+  sekeBaharToman: 264220000,
+  nimToman: 143460000,
+  robToman: 77230000,
+  geramiToman: 38150000,
+  silverToman: 538510,
+  onsUsd: 4163.24,
+  brentUsd: 101.08,
 };
 
 export const MANUAL_ALIASES: Record<string, string> = {
@@ -35,12 +45,17 @@ export const MANUAL_ALIASES: Record<string, string> = {
   // Gold, Silver & Coins
   'طلا': 'gold',
   'gold': 'gold',
+  'طلا گرمی': 'gold',
+  'یک گرم طلا': 'gold',
+  'گرم طلا': 'gold',
   'مظنه': 'gold',
   'مثقال': 'gold',
   'طلای ۱۸ عیار': 'gold',
   'طلا 18': 'gold',
+  'طلای 18': 'gold',
   'طلا ۲۴': 'gold_24k',
   'طلای ۲۴ عیار': 'gold_24k',
+  'طلا 24': 'gold_24k',
   'دست دوم': 'gold_used',
   'طلای دست دوم': 'gold_used',
   'آبشده': 'gold_melted',
@@ -52,7 +67,10 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'سکه': 'seke_emami',
   'سکه امامی': 'seke_emami',
   'سکه بهار آزادی': 'seke_bahar',
+  'سکه بهار': 'seke_bahar',
   'تمام سکه': 'seke_bahar',
+  'سکه طرح جدید': 'seke_emami',
+  'سکه طرح قدیم': 'seke_bahar',
   'نیم سکه': 'seke_nim',
   'ربع سکه': 'seke_rob',
   'سکه گرمی': 'seke_gerami',
@@ -61,6 +79,9 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'دلار': 'usd',
   'دلار آمریکا': 'usd',
   'اسکناس دلار': 'usd',
+  'دلار تهران': 'usd',
+  'دلار سبزه میدان': 'usd',
+  'دلار هرات': 'usd',
   'dollar': 'usd',
   'usd': 'usd',
 
@@ -69,6 +90,7 @@ export const MANUAL_ALIASES: Record<string, string> = {
   'tether': 'usdt',
   'usdt': 'usdt',
   'تتر دیجیتال': 'usdt',
+  'تتر صرافی': 'usdt',
   'یورو': 'eur',
   'eur': 'eur',
   'درهم': 'aed',

@@ -45,15 +45,17 @@ export interface ActivityLog {
 export type ButtonType = 'url' | 'add_to_group' | 'miniapp' | 'channel';
 export type ButtonColorTheme =
   | 'telegram_blue'
-  | 'telegram_light_blue'
-  | 'telegram_premium'
   | 'telegram_green'
   | 'telegram_red'
+  | 'telegram_glass'
+  | 'telegram_light_blue'
+  | 'telegram_premium'
   | 'telegram_orange'
   | 'telegram_cyan'
   | 'telegram_pink'
   | 'telegram_dark'
   | 'telegram_graphite'
+  | 'glass'
   | 'emerald'
   | 'blue'
   | 'purple'
@@ -197,17 +199,17 @@ export interface HexColorPreset {
 }
 
 export const HEX_COLOR_PRESETS: HexColorPreset[] = [
-  // ⭐️ رنگ‌های اصلی و رسمی تلگرام (Official Telegram Colors)
+  // ⭐️ ۳ رنگ اصلی تلگرام (قرمز، سبز، آبی) + شیشه‌ای کلاسیک
   { name: 'آبی اصلی تلگرام (Telegram Blue)', hex: '#2481CC', badge: '🔵', theme: 'telegram_blue', isTelegramOfficial: true },
-  { name: 'آبی روشن تلگرام (Telegram Light Blue)', hex: '#2AABEE', badge: '🔷', theme: 'telegram_light_blue', isTelegramOfficial: true },
+  { name: 'سبز رسمی تلگرام (Verified Green)', hex: '#31B545', badge: '🟢', theme: 'telegram_green', isTelegramOfficial: true },
+  { name: 'قرمز اخطار تلگرام (Telegram Red)', hex: '#E53935', badge: '🔴', theme: 'telegram_red', isTelegramOfficial: true },
+  { name: 'شیشه‌ای شفاف تلگرام (Classic Glass)', hex: '#242F3D', badge: '▫️', theme: 'telegram_glass', isTelegramOfficial: true },
   { name: 'بنفش تلگرام پرمیوم (Telegram Premium)', hex: '#7257FF', badge: '🟣', theme: 'telegram_premium', isTelegramOfficial: true },
-  { name: 'سبز تایید و تیک وریفای تلگرام (Verified Green)', hex: '#31B545', badge: '🟢', theme: 'telegram_green', isTelegramOfficial: true },
-  { name: 'قرمز اخطار تلگرام (Telegram Red / Alert)', hex: '#E53935', badge: '🔴', theme: 'telegram_red', isTelegramOfficial: true },
-  { name: 'نارنجی ستاره تلگرام (Telegram Stars / Amber)', hex: '#FF9500', badge: '⭐️', theme: 'telegram_orange', isTelegramOfficial: true },
-  { name: 'فیروزه‌ای الماسی تلگرام (Telegram Cyan / Aqua)', hex: '#00B4D8', badge: '💎', theme: 'telegram_cyan', isTelegramOfficial: true },
+  { name: 'فیروزه‌ای الماسی تلگرام (Telegram Cyan)', hex: '#00B4D8', badge: '💎', theme: 'telegram_cyan', isTelegramOfficial: true },
+  { name: 'نارنجی ستاره تلگرام (Telegram Stars)', hex: '#FF9500', badge: '⭐️', theme: 'telegram_orange', isTelegramOfficial: true },
+  { name: 'آبی روشن تلگرام (Telegram Light Blue)', hex: '#2AABEE', badge: '🔷', theme: 'telegram_light_blue', isTelegramOfficial: true },
   { name: 'صورتی بوست تلگرام (Telegram Boost Pink)', hex: '#FF2D55', badge: '💖', theme: 'telegram_pink', isTelegramOfficial: true },
   { name: 'تم شب تیره تلگرام (Telegram Night Mode)', hex: '#0E1621', badge: '🌙', theme: 'telegram_dark', isTelegramOfficial: true },
-  { name: 'تم گرافیت تلگرام (Telegram Graphite / Slate)', hex: '#242F3D', badge: '▫️', theme: 'telegram_graphite', isTelegramOfficial: true },
 ];
 
 export interface AdConfig {
@@ -230,7 +232,8 @@ export const DEFAULT_CUSTOM_BUTTONS: CustomButtonItem[] = [
     text: 'خرید سرور ساعتی ↗',
     url: 'https://t.me/MODASR_ARZ',
     type: 'url',
-    colorTheme: 'blue',
+    colorTheme: 'telegram_blue',
+    hexColor: '#2481CC',
     iconEmoji: '💻',
     isEnabled: true,
     row: 1,
@@ -243,7 +246,8 @@ export const DEFAULT_CUSTOM_BUTTONS: CustomButtonItem[] = [
     text: 'افزودن به گروه +',
     url: 'https://t.me/Modasr_Arzbot?startgroup=start',
     type: 'add_to_group',
-    colorTheme: 'emerald',
+    colorTheme: 'telegram_green',
+    hexColor: '#31B545',
     iconEmoji: '👾',
     isEnabled: true,
     row: 2,
@@ -256,7 +260,8 @@ export const DEFAULT_CUSTOM_BUTTONS: CustomButtonItem[] = [
     text: 'mini MODASR arz (تابلوی زنده قیمت‌ها)',
     url: '',
     type: 'miniapp',
-    colorTheme: 'emerald',
+    colorTheme: 'telegram_glass',
+    hexColor: '#242F3D',
     iconEmoji: '📱',
     isEnabled: true,
     row: 3,
@@ -269,7 +274,8 @@ export const DEFAULT_CUSTOM_BUTTONS: CustomButtonItem[] = [
     text: 'عضویت در کانال رسمی',
     url: 'https://t.me/MODASR_ARZ',
     type: 'channel',
-    colorTheme: 'cyan',
+    colorTheme: 'telegram_blue',
+    hexColor: '#2481CC',
     iconEmoji: '📢',
     isEnabled: true,
     row: 4,
@@ -394,3 +400,134 @@ export const DEFAULT_EMOJI_ITEMS: CustomEmojiItem[] = [
   { id: 'down_red', name: 'نشان کاهش و افت قیمت (قرمز)', key: 'down', emojiTag: '🔴', category: 'system' },
   { id: 'plane_date', name: 'نشان تاریخ و ساعت پیام', key: 'plane', emojiTag: '✈️', category: 'system' },
 ];
+
+// ==========================================
+// ==========================================
+// 8. مرکز جامع مدیریت و پیکربندی APIها
+// (مینی‌اپ پاسخ، چنل گزارش، تابلو زنده قیمت‌ها و وب‌هوک‌ها)
+// ==========================================
+export interface ApiHubConfig {
+  // 1. تابلوی زنده قیمت‌ها (Live Price Board) - دارای اتصال ۲ گانه (Dual API)
+  priceBoard: {
+    primaryProvider: 'fast_creat' | 'tgju' | 'wallex' | 'nobitex' | 'binance' | 'custom';
+    goldApiUrl: string; // API 1: طلا و سکه اصلی
+    goldSecondaryApiUrl: string; // API 2: طلا و سکه دوم (پشتیبان / جایگزین)
+    fiatApiUrl: string; // ارز و اسکناس
+    cryptoApiUrl: string; // API 1: کریپتو اصلی (والکس / نوبیتکس)
+    cryptoSecondaryApiUrl: string; // API 2: کریپتو دوم (نوبیتکس / بایننس / فست‌کریت)
+    oilEnergyApiUrl: string; // نفت و انرژی اصلی
+    oilEnergySecondaryApiUrl: string; // نفت و انرژی دوم
+    dualApiEnabled: boolean; // فعال‌سازی هر دو API به صورت همزمان
+    enforceConfiguredApisOnly: boolean; // فقط و فقط متصل شدن APIهای داده شده
+    refreshIntervalSec: number;
+    customJsonEndpoint: string;
+    apiKeyHeaderName?: string;
+    apiKeyHeaderValue?: string;
+    enableRechartsTrends: boolean;
+  };
+
+  // 2. مینی‌اپ پاسخ و هوش استعلام (Mini-App Response & Engine) - دارای اتصال ۲ گانه
+  miniApp: {
+    dataEndpoint: string; // API 1: دیتای زنده نرخ‌ها و چارت مینی‌اپ
+    responseEndpoint: string; // API 2: وب‌سرویس پاسخ و استعلام هوشمند
+    dualApiEnabled: boolean; // فعال‌سازی هر دو API مینی‌اپ پاسخ
+    aiQueryEnabled: boolean;
+    aiProvider: 'internal_engine' | 'gemini' | 'custom_webhook';
+    aiApiKey: string;
+    aiSystemPrompt: string;
+    refreshIntervalSec: number;
+    show24hChartSparklines: boolean;
+    autoCacheTtlSec: number;
+    customWebhookUrl: string;
+  };
+
+  // 3. چنل گزارش و ارسال خودکار (Channel Report & Auto-Broadcast) - دارای اتصال ۲ گانه
+  channelReport: {
+    isEnabled: boolean;
+    botToken: string;
+    primaryApiUrl: string; // API 1: تلگرام بات اصلی (ارسال مستقیم)
+    secondaryApiUrl: string; // API 2: درگاه دوم / پشتیبان چنل گزارش
+    dualApiEnabled: boolean; // ارسال به هر دو یا پشتیبان‌گیری خودکار
+    channelUsernameOrId: string;
+    secondaryChannelId: string; // کانال دوم یا کانال بکاپ
+    postIntervalMinutes: number;
+    postTemplateMode: 'image_card_and_summary' | 'text_summary' | 'grid_overview';
+    reportTitle: string;
+    include24hChange: boolean;
+    includeHighLow: boolean;
+    includeWatermark: boolean;
+    customBroadcastWebhookUrl: string;
+  };
+
+  // 4. درگاه‌های عمومی توسعه‌دهنده و وب‌هوک (Developer & System Webhooks) - دارای اتصال ۲ گانه
+  developer: {
+    adminApiKey: string;
+    publicRestApiEnabled: boolean;
+    primaryGatewayUrl: string; // API 1: اندپوینت عمومی قیمت‌ها (/api/prices)
+    secondaryGatewayUrl: string; // API 2: اندپوینت مکمل استعلام نرخ‌ها (/api/rates)
+    dualGatewayEnabled: boolean;
+    webhookUrl: string; // وب‌هوک ورودی پیام‌ها (/api/webhook)
+    customCorsAllowedOrigins: string;
+    lastTestedAt?: string;
+  };
+}
+
+export const DEFAULT_API_HUB_CONFIG: ApiHubConfig = {
+  priceBoard: {
+    primaryProvider: 'fast_creat',
+    goldApiUrl: 'https://api.fast-creat.ir/gold?apikey=6750948508:ZqGU7X4Vj05BwLt@Api_ManagerRoBot',
+    goldSecondaryApiUrl: 'https://call.tgju.org/ajax.json',
+    fiatApiUrl: 'https://call.tgju.org/ajax.json',
+    cryptoApiUrl: 'https://api.fast-creat.ir/nobitex/v2?apikey=6750948508:dNoLxDYryOH7QS5@Api_ManagerRoBot',
+    cryptoSecondaryApiUrl: 'https://api.wallex.ir/v1/markets',
+    oilEnergyApiUrl: 'https://call.tgju.org/ajax.json',
+    oilEnergySecondaryApiUrl: 'https://api.oilpriceapi.com/v1/prices/latest',
+    dualApiEnabled: true,
+    enforceConfiguredApisOnly: true, // فقط و فقط APIهای داده شده متصل شوند
+    refreshIntervalSec: 2,
+    customJsonEndpoint: '',
+    apiKeyHeaderName: '',
+    apiKeyHeaderValue: '',
+    enableRechartsTrends: true,
+  },
+  miniApp: {
+    dataEndpoint: '/api/miniapp/data',
+    responseEndpoint: '/api/bot/response',
+    dualApiEnabled: true,
+    aiQueryEnabled: true,
+    aiProvider: 'internal_engine',
+    aiApiKey: '',
+    aiSystemPrompt: 'دستیار و موتور هوشمند پردازش و پاسخگویی به استعلامات طلا، ارز و کریپتو مینی‌اپ',
+    refreshIntervalSec: 10,
+    show24hChartSparklines: true,
+    autoCacheTtlSec: 5,
+    customWebhookUrl: '',
+  },
+  channelReport: {
+    isEnabled: true,
+    botToken: '',
+    primaryApiUrl: 'https://api.telegram.org',
+    secondaryApiUrl: 'https://api.telegram.org',
+    dualApiEnabled: true,
+    channelUsernameOrId: '@MODASR_ARZ',
+    secondaryChannelId: '@MODASR_ARZ_BACKUP',
+    postIntervalMinutes: 60,
+    postTemplateMode: 'image_card_and_summary',
+    reportTitle: '📊 گزارش و بولتن زنده بازار ارز و طلا',
+    include24hChange: true,
+    includeHighLow: true,
+    includeWatermark: true,
+    customBroadcastWebhookUrl: '',
+  },
+  developer: {
+    adminApiKey: '',
+    publicRestApiEnabled: true,
+    primaryGatewayUrl: '/api/prices',
+    secondaryGatewayUrl: '/api/rates',
+    dualGatewayEnabled: true,
+    webhookUrl: '/api/webhook',
+    customCorsAllowedOrigins: '*',
+    lastTestedAt: '',
+  },
+};
+

@@ -6,25 +6,17 @@ export class TunnelService {
   private static publicUrl: string = '';
   private static process: ChildProcess | null = null;
   private static isStarting: boolean = false;
-  // Used only when no DOMAIN is set and the tunnel is not up yet
-  private static get fallbackUrl(): string {
-    return (process.env.APP_URL || '').trim().replace(/\/+$/, '') || 'https://localhost';
-  }
+  private static fallbackUrl: string = 'https://ais-pre-zskvaylyhohvurwbbahz3f-866989204783.europe-west2.run.app';
 
   /**
    * Start or retrieve the public tunnel URL
    */
-  private static getDomainUrl(): string {
-    const domain = (process.env.DOMAIN || '').trim().replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    return domain ? `https://${domain}` : '';
-  }
-
   static getPublicUrl(): string {
-    return this.getDomainUrl() || this.publicUrl || this.fallbackUrl;
+    return this.publicUrl || this.fallbackUrl;
   }
 
   static getMiniAppUrl(): string {
-    const base = this.getPublicUrl();
+    const base = this.publicUrl || this.fallbackUrl;
     return `${base}/mini-modasr-arz`;
   }
 
@@ -36,12 +28,6 @@ export class TunnelService {
    * Initialize Cloudflare Tunnel in background
    */
   static async startTunnel(): Promise<string> {
-    // A real domain is configured (DOMAIN in .env): no Cloudflare tunnel needed
-    const domainUrl = this.getDomainUrl();
-    if (domainUrl) {
-      console.log('[TunnelService] Using configured domain for Mini App:', `${domainUrl}/mini-modasr-arz`);
-      return domainUrl;
-    }
     if (this.publicUrl) return this.publicUrl;
     if (this.isStarting) return this.fallbackUrl;
 

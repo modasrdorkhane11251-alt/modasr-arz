@@ -1,4 +1,3 @@
-import { BOT_CONFIG } from './config';
 import fs from 'fs';
 import path from 'path';
 
@@ -23,6 +22,7 @@ const EMOJI_CONFIG_FILE = path.join(DATA_DIR, 'emoji_config.json');
 const CHANNEL_CONFIG_FILE = path.join(DATA_DIR, 'channel_poster_config.json');
 const ADMIN_ALERT_CONFIG_FILE = path.join(DATA_DIR, 'admin_alert_config.json');
 const KEYBOARD_THEME_FILE = path.join(DATA_DIR, 'keyboard_theme.json');
+const API_HUB_CONFIG_FILE = path.join(DATA_DIR, 'api_hub_config.json');
 
 export * from './types';
 import {
@@ -40,6 +40,8 @@ import {
   DEFAULT_EMOJI_ITEMS,
   KeyboardThemeConfig,
   DEFAULT_KEYBOARD_THEME_CONFIG,
+  ApiHubConfig,
+  DEFAULT_API_HUB_CONFIG,
 } from './types';
 
 export class BotStorage {
@@ -460,13 +462,12 @@ export class BotStorage {
   }
 
   static getAdminAlertConfig(): AdminAlertConfig {
-    const base = { ...DEFAULT_ADMIN_ALERT_CONFIG, adminId: BOT_CONFIG.adminId };
-    if (!fs.existsSync(ADMIN_ALERT_CONFIG_FILE)) return base;
+    if (!fs.existsSync(ADMIN_ALERT_CONFIG_FILE)) return DEFAULT_ADMIN_ALERT_CONFIG;
     try {
       const data = JSON.parse(fs.readFileSync(ADMIN_ALERT_CONFIG_FILE, 'utf-8'));
-      return { ...base, ...data };
+      return { ...DEFAULT_ADMIN_ALERT_CONFIG, ...data };
     } catch {
-      return base;
+      return DEFAULT_ADMIN_ALERT_CONFIG;
     }
   }
 
@@ -502,6 +503,39 @@ export class BotStorage {
     return updated;
   }
 
+  static getApiHubConfig(): ApiHubConfig {
+    if (!fs.existsSync(API_HUB_CONFIG_FILE)) return DEFAULT_API_HUB_CONFIG;
+    try {
+      const data = JSON.parse(fs.readFileSync(API_HUB_CONFIG_FILE, 'utf-8'));
+      return {
+        ...DEFAULT_API_HUB_CONFIG,
+        ...data,
+        priceBoard: { ...DEFAULT_API_HUB_CONFIG.priceBoard, ...(data.priceBoard || {}) },
+        miniApp: { ...DEFAULT_API_HUB_CONFIG.miniApp, ...(data.miniApp || {}) },
+        channelReport: { ...DEFAULT_API_HUB_CONFIG.channelReport, ...(data.channelReport || {}) },
+        developer: { ...DEFAULT_API_HUB_CONFIG.developer, ...(data.developer || {}) },
+      };
+    } catch {
+      return DEFAULT_API_HUB_CONFIG;
+    }
+  }
+
+  static setApiHubConfig(config: Partial<ApiHubConfig>): ApiHubConfig {
+    const current = this.getApiHubConfig();
+    const updated: ApiHubConfig = {
+      priceBoard: { ...current.priceBoard, ...(config.priceBoard || {}) },
+      miniApp: { ...current.miniApp, ...(config.miniApp || {}) },
+      channelReport: { ...current.channelReport, ...(config.channelReport || {}) },
+      developer: { ...current.developer, ...(config.developer || {}) },
+    };
+    try {
+      fs.writeFileSync(API_HUB_CONFIG_FILE, JSON.stringify(updated, null, 2), 'utf-8');
+    } catch (e) {
+      console.error('Error saving API hub config:', e);
+    }
+    return updated;
+  }
+
   /**
    * Export complete application state and configurations for Backup
    */
@@ -512,6 +546,7 @@ export class BotStorage {
       timestamp: Date.now(),
       app: 'MODASR_ARZ_TELEGRAM_BOT',
       data: {
+        apiHubConfig: this.getApiHubConfig(),
         adConfig: this.getAdConfig(),
         keyboardTheme: this.getKeyboardTheme(),
         emojiConfig: this.getEmojiConfig(),
@@ -537,6 +572,11 @@ export class BotStorage {
 
       const backupData = payload.data || payload;
       let restoredCount = 0;
+
+      if (backupData.apiHubConfig && typeof backupData.apiHubConfig === 'object') {
+        this.setApiHubConfig(backupData.apiHubConfig);
+        restoredCount++;
+      }
 
       if (backupData.adConfig && typeof backupData.adConfig === 'object') {
         this.setAdConfig(backupData.adConfig);

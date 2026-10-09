@@ -405,20 +405,22 @@ export class TelegramService {
       ? keyboardTheme.showColorBadgesInChannel !== false
       : keyboardTheme.showColorBadgesInPrivate !== false;
 
-    // Helper for formatting button text with emoji and color indicator
+    // Helper for formatting button text with emoji, premium emoji and Telegram official color indicator
     const formatButtonText = (btn: CustomButtonItem) => {
+      let text = (btn.text || '').trim();
       const icon = (btn.iconEmoji || '').trim();
       const colorPrefixes: Record<string, string> = {
         telegram_blue: '🔵',
-        telegram_light_blue: '🔷',
-        telegram_premium: '🟣',
         telegram_green: '🟢',
         telegram_red: '🔴',
+        telegram_glass: '',
+        telegram_light_blue: '🔷',
+        telegram_premium: '🟣',
         telegram_orange: '⭐️',
         telegram_cyan: '💎',
         telegram_pink: '💖',
         telegram_dark: '🌙',
-        telegram_graphite: '▫️',
+        telegram_graphite: '',
         emerald: '🟢',
         blue: '🔵',
         purple: '🟣',
@@ -426,7 +428,8 @@ export class TelegramService {
         rose: '🔴',
         cyan: '💎',
         orange: '🟠',
-        dark: '▫️',
+        dark: '',
+        glass: '',
       };
 
       // Determine effective HEX color based on button type & global theme settings
@@ -438,30 +441,29 @@ export class TelegramService {
         else effectiveHex = keyboardTheme.primaryHex;
       }
 
-      // Map custom HEX color to appropriate visual badge
-      let badge = colorPrefixes[btn.colorTheme] || '🔹';
-      if (effectiveHex) {
+      // Map custom HEX color to appropriate visual badge if not already mapped
+      let badge = colorPrefixes[btn.colorTheme] || '';
+      if (effectiveHex && !badge) {
         const hex = effectiveHex.toLowerCase();
-        if (hex.includes('2481cc') || hex.includes('229ed9') || hex.includes('0088cc') || hex.includes('2563eb') || hex.includes('3b82f6') || hex.includes('00f0ff')) badge = '🔵';
-        else if (hex.includes('2aabee') || hex.includes('29b6f6') || hex.includes('60a5fa')) badge = '🔷';
-        else if (hex.includes('7257ff') || hex.includes('8e44ad') || hex.includes('8b5cf6') || hex.includes('9c27b0') || hex.includes('7000ff')) badge = '🟣';
-        else if (hex.includes('31b545') || hex.includes('4fae4e') || hex.includes('10b981') || hex.includes('22c55e') || hex.includes('00ff66')) badge = '🟢';
-        else if (hex.includes('e53935') || hex.includes('ff3b30') || hex.includes('ef4444') || hex.includes('dc2626') || hex.includes('ff3366')) badge = '🔴';
-        else if (hex.includes('ff9500') || hex.includes('f57c00') || hex.includes('f59e0b') || hex.includes('eab308') || hex.includes('e5a93c') || hex.includes('ffe600')) badge = '⭐️';
-        else if (hex.includes('00b4d8') || hex.includes('06b6d4') || hex.includes('26a69a') || hex.includes('22d3ee')) badge = '💎';
-        else if (hex.includes('ff2d55') || hex.includes('e91e63') || hex.includes('ec4899') || hex.includes('f43f5e') || hex.includes('ff0055')) badge = '💖';
-        else if (hex.includes('0e1621') || hex.includes('17212b') || hex.includes('384b5e')) badge = '🌙';
-        else if (hex.includes('242f3d') || hex.includes('334155')) badge = '▫️';
+        if (hex.includes('e53935') || hex.includes('ff3b30') || hex.includes('ef4444') || hex.includes('dc2626')) badge = '🔴';
+        else if (hex.includes('31b545') || hex.includes('4fae4e') || hex.includes('10b981') || hex.includes('22c55e')) badge = '🟢';
+        else if (hex.includes('2481cc') || hex.includes('229ed9') || hex.includes('0088cc') || hex.includes('2563eb') || hex.includes('3b82f6')) badge = '🔵';
+        else if (hex.includes('7257ff') || hex.includes('8e44ad') || hex.includes('8b5cf6')) badge = '🟣';
+        else if (hex.includes('ff9500') || hex.includes('f57c00') || hex.includes('f59e0b')) badge = '⭐️';
       }
 
-      // If badges are disabled for this context, only show icon or clean text
-      if (!shouldShowBadges) {
-        return icon ? `${icon} ${btn.text}` : btn.text;
+      let label = text;
+      // Append icon/emoji if present and not already part of label
+      if (icon && !label.includes(icon)) {
+        label = `${label} ${icon}`;
       }
 
-      // If icon is already set, use it; otherwise use color theme prefix
-      const prefix = icon || badge;
-      return prefix ? `${prefix} ${btn.text}` : btn.text;
+      // Prepend official Telegram color badge (Red 🔴, Green 🟢, Blue 🔵) if enabled and not glass
+      if (badge && shouldShowBadges && !label.includes(badge)) {
+        label = `${badge} ${label}`;
+      }
+
+      return label;
     };
 
     for (const btn of buttons) {
@@ -526,46 +528,6 @@ export class TelegramService {
     return { inline_keyboard };
   }
 
-  /**
-   * Colorful Bottom Reply Keyboard (منوی اصلی کیبورد رنگی و مدرن تلگرام مطابق عکس کاربر)
-   */
-  static getColorfulReplyKeyboard(isAdmin: boolean = false) {
-    const keyboard = [
-      [{ text: '🛒 خرید اشتراک' }],
-      [
-        { text: '🛍️ سرویس های من' },
-        { text: '🏦 کیف پول + شارژ' },
-      ],
-      [
-        { text: '🔑 اکانت تست' },
-        { text: '♻️ تمدید سرویس' },
-      ],
-      [
-        { text: '👥 زیر مجموعه گیری' },
-        { text: '🎲 گردونه شانس' },
-      ],
-      [
-        { text: '☎️ پشتیبانی' },
-        { text: '📚 آموزش' },
-      ],
-      isAdmin
-        ? [
-            { text: '👨‍💼 پنل مدیریت' },
-            { text: '👨‍💻 درخواست نمایندگی' },
-          ]
-        : [
-            { text: '📱 mini MODASR arz' },
-            { text: '👨‍💻 درخواست نمایندگی' },
-          ],
-    ];
-
-    return {
-      keyboard,
-      resize_keyboard: true,
-      is_persistent: true,
-    };
-  }
-
   static getAdminKeyboard() {
     return {
       inline_keyboard: [
@@ -615,7 +577,7 @@ export class TelegramService {
   /**
    * Main update processor
    */
-  static async handleUpdate(update: TelegramUpdate, token: string = BOT_CONFIG.token): Promise<{ success: boolean; responseText?: string }> {
+  static async handleUpdate(update: TelegramUpdate, token: string = BOT_CONFIG.token): Promise<{ success: boolean; responseText?: string; replyMarkup?: any }> {
     if (!update) return { success: false };
 
     // 1. Handle Callback Query
@@ -706,7 +668,6 @@ export class TelegramService {
           } else {
             const welcome = this.getWelcomeText();
             await this.sendMessage(chatId, welcome, 'HTML', this.getResponseKeyboard(false), token);
-            await this.sendMessage(chatId, '👇 از منوی زیر برای دسترسی سریع به بخش‌های ربات استفاده کنید:', 'HTML', this.getColorfulReplyKeyboard(fromId === BOT_CONFIG.adminId), token);
             BotStorage.addLog({
               type: 'incoming_msg',
               userId: fromId,
@@ -815,7 +776,10 @@ export class TelegramService {
     );
   }
 
-  static async handleCurrencyRequest(msg: any, token: string = BOT_CONFIG.token): Promise<{ success: boolean; responseText: string }> {
+  static async handleCurrencyRequest(
+    msg: any,
+    token: string = BOT_CONFIG.token
+  ): Promise<{ success: boolean; responseText: string; replyMarkup?: any }> {
     const rawText = msg.text || '';
     if (!rawText.trim()) return { success: false, responseText: '' };
 
@@ -823,188 +787,117 @@ export class TelegramService {
     const fromId = msg.from?.id || chatId;
     const isGroup = msg.chat?.type === 'group' || msg.chat?.type === 'supergroup';
 
-    let textClean = PriceService.faNumToEn(rawText.trim().toLowerCase());
-    
-    // 1. Strip all bot username mentions anywhere in text: e.g. @Modasr_Arzbot
-    textClean = textClean.replace(/@[a-zA-Z0-9_]+/gi, '').trim();
-
-    // 2. Normalize spaces and zero-width characters
-    textClean = textClean.replace(/[\u200c\u200b\u00a0]+/g, ' ').trim();
-
-    // 3. Strip trailing punctuation: ؟ ? ! . : ؛ ,
-    textClean = textClean.replace(/[؟!?.؛:،,]+$/g, '').trim();
-
-    // 4. Strip leading slash and commands (e.g. /btc -> btc, /p btc -> btc)
-    if (textClean.startsWith('/')) {
-      textClean = textClean.substring(1).trim();
-    }
-    textClean = textClean.replace(/^(?:p|c|arz|qeymat|price)\s+/gi, '').trim();
-
-    // 5. Strip common Persian conversational prefixes:
-    textClean = textClean.replace(/^(?:قیمت\s+لحظه\s*ای|قیمت\s+روز|قیمت|نرخ\s+لحظه\s*ای|نرخ\s+روز|نرخ|استعلام\s+قیمت|استعلام|ارزش)\s+/gi, '').trim();
-
-    // 6. Strip common Persian conversational suffixes:
-    textClean = textClean.replace(/\s+(?:چنده|چند\s+است|چند\s+شد|چقدر\s+شد|چقدره|رو\s+بگو|بگو|لطفا|لطفاً|چند\s+تومنه|چند\s+تومان\s+است|امروز)\s*$/gi, '').trim();
-    textClean = textClean.replace(/[؟!?.؛:،,]+$/g, '').trim();
-
-    // 0. Check for Colorful Main Menu Button Clicks:
-    if (textClean.includes('خرید اشتراک') || textClean.includes('اشتراک')) {
-      const subMsg =
-        `🛒 <b>پلن‌های اشتراک و عضویت VIP:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `✨ <b>اشتراک ۱ ماهه:</b> دسترسی به تحلیل و هشدارهای نوسان قیمت\n` +
-        `💎 <b>اشتراک ۳ ماهه:</b> وب‌سرویس اختصاصی + استعلام سریع بدون محدودیت\n` +
-        `👑 <b>اشتراک سالانه VIP:</b> ربات اختصاصی برای کانال و گروه شما\n\n` +
-        `💳 جهت خرید و شارژ حساب، از دکمه «🏦 کیف پول + شارژ» استفاده نمایید.`;
-      await this.sendMessage(chatId, subMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: subMsg };
-    }
-
-    if (textClean.includes('کیف پول') || textClean.includes('شارژ')) {
-      const walletMsg =
-        `🏦 <b>کیف پول و حساب کاربری:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `👤 شناسه کاربری: <code>${fromId}</code>\n` +
-        `💰 موجودی تومانی: <b>۰ تومان</b>\n` +
-        `🪙 موجودی تتری: <b>0.00 USDT</b>\n\n` +
-        `📥 برای افزایش موجودی می‌توانید به پشتیبانی پیام دهید یا از درگاه استفاده نمایید.`;
-      await this.sendMessage(chatId, walletMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: walletMsg };
-    }
-
-    if (textClean.includes('سرویس های من') || textClean.includes('سرویس‌های من')) {
-      const srvMsg =
-        `🛍️ <b>سرویس‌های فعال شما:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `🟢 اشتراک پایه: <b>رایگان و فعال</b>\n` +
-        `⚡️ استعلام لحظه‌ای و نامحدود قیمت ارز و طلا\n` +
-        `📱 دسترسی به مینی‌اپ تابلوی زنده قیمت‌ها`;
-      await this.sendMessage(chatId, srvMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: srvMsg };
-    }
-
-    if (textClean.includes('اکانت تست') || textClean.includes('استعلام سریع')) {
-      const testMsg =
-        `🔑 <b>استعلام سریع نرخ‌ها:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `کافیست نام هر ارزی که می‌خواهید را بنویسید:\n` +
-        `• <code>تتر</code> یا <code>100 تتر</code>\n` +
-        `• <code>دلار</code> یا <code>50 دلار</code>\n` +
-        `• <code>طلا</code> یا <code>سکه امامی</code> یا <code>مظنه</code>\n` +
-        `• <code>بیت کوین</code> یا <code>اتریوم</code> یا <code>سولانا</code>`;
-      await this.sendMessage(chatId, testMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: testMsg };
-    }
-
-    if (textClean.includes('گردونه شانس') || textClean.includes('شانس')) {
-      const prizes = ['تخفیف ۱۰ درصدی اشتراک VIP', '۵۰۰۰ تومان اعتبار کیف پول', 'استعلام نامحدود ماهانه', 'تخفیف ۲۰ درصدی سرور'];
-      const prize = prizes[Math.floor(Math.random() * prizes.length)];
-      const spinMsg =
-        `🎲 <b>گردونه شانس روزانه:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `🎯 پاداش شما:\n` +
-        `🎁 <b>${prize}</b>\n\n` +
-        `⚡️ هر ۲۴ ساعت یک‌بار شانس چرخش مجدد دارید!`;
-      await this.sendMessage(chatId, spinMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: spinMsg };
-    }
-
-    if (textClean.includes('زیر مجموعه') || textClean.includes('زیرمجموعه')) {
-      const botUser = BOT_CONFIG.botUsername || 'Modasr_Arzbot';
-      const refUrl = `https://t.me/${botUser}?start=ref_${fromId}`;
-      const refMsg =
-        `👥 <b>سامانه کسب درآمد و زیرمجموعه‌گیری:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `با معرفی ربات به دوستان خود، ۲۰٪ از خرید آن‌ها به عنوان پاداش به کیف پول شما واریز می‌شود!\n\n` +
-        `🔗 <b>لینک اختصاصی شما:</b>\n` +
-        `<code>${refUrl}</code>\n\n` +
-        `📊 تعداد زیرمجموعه‌ها: <b>۰ نفر</b>\n` +
-        `💰 پاداش دریافتی: <b>۰ تومان</b>`;
-      await this.sendMessage(chatId, refMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: refMsg };
-    }
-
-    if (textClean.includes('آموزش')) {
-      const helpMsg =
-        `📚 <b>راهنما و آموزش کامل ربات:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `۱. <b>استعلام سریع:</b> ارسال نام ارز (مثلاً: تتر، دلار، طلا)\n` +
-        `۲. <b>محاسبه مقدار:</b> ارسال عدد قبل از نام ارز (مثلاً: 100 دلار، 2.5 گرم طلا)\n` +
-        `۳. <b>تابلوی کامل بازار:</b> ارسال دستور /بازار\n` +
-        `۴. <b>مینی‌اپ تابلوی زنده:</b> ارسال دستور /app یا زدن دکمه مینی‌اپ\n` +
-        `۵. <b>گزارش باگ یا پیام به ادمین:</b> ارسال دستور /report متن پیام`;
-      await this.sendMessage(chatId, helpMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: helpMsg };
-    }
-
-    if (textClean.includes('پشتیبانی') || textClean.includes('درخواست نمایندگی')) {
-      const supportMsg =
-        `☎️ <b>پشتیبانی و ارتباط با مدیریت:</b>\n` +
-        `➖➖➖➖➖➖➖➖➖➖\n` +
-        `جهت ارسال پیام، گزارش خطا یا درخواست نمایندگی، کافیست متن خود را با دستور زیر بفرستید:\n` +
-        `<code>/report متن پیام یا درخواست شما</code>\n\n` +
-        `⚡️ پیام شما مستقیماً در پیوی ادمین ثبت و بررسی خواهد شد.`;
-      await this.sendMessage(chatId, supportMsg, 'HTML', this.getResponseKeyboard(false), token, msg.message_id);
-      return { success: true, responseText: supportMsg };
-    }
-
-    if (textClean.includes('پنل مدیریت') && fromId === BOT_CONFIG.adminId) {
-      const kb = this.getAdminKeyboard();
-      const adminMsg = '<b>پنل مدیریت ربات :</b>\n➖➖➖➖➖➖➖➖‏➖➖➖';
-      await this.sendMessage(chatId, adminMsg, 'HTML', kb, token, msg.message_id);
-      return { success: true, responseText: adminMsg };
-    }
-
-    // 1. Check for Market Overview (3x3 Grid)
+    // 0. Remove legacy reply keyboard if old buttons are tapped
+    const lowerRaw = rawText.toLowerCase();
     if (
-      !textClean ||
-      textClean === 'بازار' ||
-      textClean === 'ارزها' ||
-      textClean === 'ارز' ||
-      textClean === 'لیست قیمت' ||
-      textClean === 'لیست ارزها' ||
-      textClean === 'لیست' ||
-      textClean === 'کریپتو' ||
-      textClean === 'مارکت' ||
-      textClean === 'overview' ||
-      textClean === 'market' ||
-      textClean === 'help' ||
-      textClean === 'راهنما'
+      lowerRaw.includes('کیف پول') ||
+      lowerRaw.includes('سرویس های من') ||
+      lowerRaw.includes('سرویس‌های من') ||
+      lowerRaw.includes('خرید اشتراک') ||
+      lowerRaw.includes('تمدید سرویس') ||
+      lowerRaw.includes('اکانت تست') ||
+      lowerRaw.includes('گردونه شانس') ||
+      lowerRaw.includes('زیر مجموعه') ||
+      lowerRaw.includes('زیرمجموعه') ||
+      lowerRaw.includes('درخواست نمایندگی')
     ) {
-      const resp = await this.handleMarketOverviewRequest({ ...msg, text: textClean }, token);
+      await this.sendMessage(
+        chatId,
+        '✨ منوی قدیمی حذف شد. برای استعلام قیمت کافیست نام ارز (مثلاً: <code>تتر</code> یا <code>طلا</code>) را ارسال کنید یا دستور <code>/بازار</code> را بزنید.',
+        'HTML',
+        { remove_keyboard: true },
+        token,
+        msg.message_id
+      );
+      return { success: true, responseText: 'Keyboard removed' };
+    }
+
+    // 1. Natural Conversational Query Parsing
+    const parsed = PriceService.parseNaturalQuery(rawText);
+
+    // 2. Greetings or Help questions alone
+    if (parsed.isGreetingOrHelp) {
+      const guideMsg =
+        `👋 <b>سلام و درود! به سیستم هوشمند استعلام لحظه‌ای طلا، ارز و کریپتو خوش آمدید.</b>\n\n` +
+        `💡 <b>راهنمای پاسخ و استعلام لحظه‌ای:</b>\n` +
+        `شما می‌توانید به صورت عامیانه، سوالی یا مستقیم نام هر ارز و مقدار را بنویسید:\n\n` +
+        `<b>مثال‌های پرسش لحظه‌ای:</b>\n` +
+        `• <code>قیمت تتر الان چنده؟</code>\n` +
+        `• <code>نرخ دلار امروز چقدره؟</code>\n` +
+        `• <code>۵۰ دلار چند تومن میشه؟</code>\n` +
+        `• <code>طلا گرمی چند تومنه؟</code>\n` +
+        `• <code>قیمت سکه امامی چقدره</code>\n` +
+        `• <code>۱۰۰ تتر</code> یا <code>2.5 گرم طلا</code>\n` +
+        `• <code>بیت کوین چند دلاره؟</code>\n` +
+        `• <code>/بازار</code> (گزارش تصویری زنده بازار)\n` +
+        `• <code>/app</code> (ورود به مینی‌اپ اختصاصی)\n\n` +
+        `⚡️ <i>تمام داده‌ها به صورت آنی و لحظه‌ای به APIهای رسمی متصل هستند.</i>`;
+      await this.sendMessage(chatId, guideMsg, 'HTML', this.getResponseKeyboard(isGroup), token, isGroup ? msg.message_id : undefined);
+      return { success: true, responseText: guideMsg };
+    }
+
+    // 3. Mini App request
+    if (parsed.isMiniAppRequest) {
+      const miniAppUrl = TunnelService.getMiniAppUrl();
+      const appMsg =
+        '📱 <b>مینی‌اپ اختصاصی mini MODASR arz (شاخص زنده بازار):</b>\n\n' +
+        '✨ تابلوی زنده قیمت‌ها، شاخص نوسانات لحظه‌ای، چارت‌های تعاملی و ماشین‌حساب مبدل ارز آماده است.\n' +
+        '🔒 <b>لینک مخفی و اختصاصی:</b> فعال و آماده استفاده در تلگرام و وب!\n\n' +
+        '👇 برای باز کردن mini MODASR arz روی دکمه زیر ضربه بزنید:';
+      const kb = {
+        inline_keyboard: isGroup
+          ? [
+              [{ text: '🚀 ورود به mini MODASR arz', url: `https://t.me/${BOT_CONFIG.botUsername}?start=miniapp` }],
+              [{ text: '📢 کانال رسمی تلگرام', url: 'https://t.me/MODASR_ARZ' }],
+            ]
+          : [
+              [{ text: '🚀 ورود به mini MODASR arz ⚡', web_app: { url: miniAppUrl } }],
+              [{ text: '📢 کانال رسمی تلگرام', url: 'https://t.me/MODASR_ARZ' }],
+            ],
+      };
+      await this.sendMessage(chatId, appMsg, 'HTML', kb, token, isGroup ? msg.message_id : undefined);
+      return { success: true, responseText: appMsg };
+    }
+
+    // 4. Market Overview (3x3 Grid)
+    if (parsed.isOverviewRequest || !parsed.cleanKey) {
+      const resp = await this.handleMarketOverviewRequest({ ...msg, text: parsed.cleanKey || 'بازار' }, token);
       return { success: !!resp, responseText: resp };
     }
 
-    // 2. Check for Crude Oil & Energy
+    const cleanKey = parsed.cleanKey;
+    const amount = parsed.amount;
+
+    // 5. Crude Oil & Energy
     if (
-      textClean.includes('نفت') ||
-      textClean.includes('oil') ||
-      textClean.includes('brent') ||
-      textClean.includes('wti') ||
-      textClean.includes('گاز')
+      cleanKey.includes('نفت') ||
+      cleanKey.includes('oil') ||
+      cleanKey.includes('brent') ||
+      cleanKey.includes('wti') ||
+      cleanKey.includes('گاز')
     ) {
-      const resp = await this.handleOilRequest({ ...msg, text: textClean }, token);
-      return { success: !!resp, responseText: resp };
+      const resp = await this.handleOilRequest({ ...msg, text: cleanKey, amount }, token);
+      return { success: !!resp, responseText: resp, replyMarkup: this.getResponseKeyboard(isGroup) };
     }
 
-    // 3. Check for Gold, Silver, Seke, Mazaneh
+    // 6. Gold, Silver, Seke, Mazaneh
     if (
-      textClean.includes('طلا') ||
-      textClean.includes('gold') ||
-      textClean.includes('مظنه') ||
-      textClean.includes('مثقال') ||
-      textClean.includes('سکه') ||
-      textClean.includes('نقره') ||
-      textClean.includes('silver') ||
-      textClean.includes('آبشده')
+      cleanKey.includes('طلا') ||
+      cleanKey.includes('gold') ||
+      cleanKey.includes('مظنه') ||
+      cleanKey.includes('مثقال') ||
+      cleanKey.includes('سکه') ||
+      cleanKey.includes('نقره') ||
+      cleanKey.includes('silver') ||
+      cleanKey.includes('آبشده')
     ) {
-      const resp = await this.handleGoldRequest({ ...msg, text: textClean }, token);
-      return { success: !!resp, responseText: resp };
+      const resp = await this.handleGoldRequest({ ...msg, text: cleanKey, amount }, token);
+      return { success: !!resp, responseText: resp, replyMarkup: this.getResponseKeyboard(isGroup) };
     }
 
-    // 4. Default: Cryptocurrency / Fiat Query
-    const resp = await this.handleCoinRequest({ ...msg, text: textClean }, token);
-    return { success: !!resp, responseText: resp };
+    // 7. Default: Cryptocurrency / Fiat Query
+    const resp = await this.handleCoinRequest({ ...msg, text: cleanKey, amount }, token);
+    return { success: !!resp, responseText: resp, replyMarkup: this.getResponseKeyboard(isGroup) };
   }
 
   /**
@@ -1087,6 +980,7 @@ export class TelegramService {
     const replyToId = isGroup ? msg.message_id : undefined;
     const keyboard = this.getResponseKeyboard(isGroup);
 
+    const amount = msg.amount && msg.amount > 0 ? msg.amount : 1;
     const oilType = text.includes('wti') || text.includes('خام') ? 'wti' : text.includes('گاز') ? 'gas' : 'brent';
     const oilData = await PriceService.getOilPrice(oilType);
 
@@ -1096,9 +990,15 @@ export class TelegramService {
     const watermark = adConfig.watermarkTag || '@MODASR_ARZ | MODASRP';
 
     const header = adConfig.headerIntro ? `<b>${adConfig.headerIntro}</b>\n\n` : '';
-    const tomanFormatted = (oilData.priceToman || 0).toLocaleString('en-US');
-    const highTomanFormatted = (oilData.highToman || 0).toLocaleString('en-US');
-    const lowTomanFormatted = (oilData.lowToman || 0).toLocaleString('en-US');
+    const unitToman = oilData.priceToman || 0;
+    const totalToman = Math.round(unitToman * amount);
+    const totalHighToman = Math.round((oilData.highToman || unitToman * 1.01) * amount);
+    const totalLowToman = Math.round((oilData.lowToman || unitToman * 0.99) * amount);
+    const totalUsd = (oilData.priceUsd || 0) * amount;
+
+    const tomanFormatted = totalToman.toLocaleString('en-US');
+    const highTomanFormatted = totalHighToman.toLocaleString('en-US');
+    const lowTomanFormatted = totalLowToman.toLocaleString('en-US');
 
     const oilItem = emojiConfig.items?.find((x) => x.key === (oilType === 'brent' ? 'oil_brent' : 'oil_wti')) ||
       emojiConfig.items?.find((x) => x.key.startsWith('oil'));
@@ -1122,12 +1022,13 @@ export class TelegramService {
 
     const changeSign = oilData.dayChange >= 0 ? upEmojiTag : downEmojiTag;
     const changeFormatted = `${oilData.dayChange >= 0 ? '+' : ''}${oilData.dayChange.toFixed(2)}%`;
+    const amountLabel = amount > 1 ? `${amount} Barrel` : '1 Barrel';
 
     const responseMsg =
       `${header}` +
-      `<b>${oilEmojiTag} 1 Barrel ${oilData.name} :</b>\n\n` +
+      `<b>${oilEmojiTag} ${amountLabel} ${oilData.name} :</b>\n\n` +
       `<b>${tomanEmojiTag} ${tomanFormatted} toman</b>\n` +
-      `<b>${dollarEmojiTag} $${oilData.priceUsd?.toFixed(2)} dollar</b>\n` +
+      `<b>${dollarEmojiTag} $${totalUsd.toFixed(2)} dollar</b>\n` +
       `<b>${changeSign} ${changeFormatted}</b>\n\n` +
       `<blockquote>${highEmojiTag} High & Low ${lowEmojiTag}\n${tomanEmojiTag} ${highTomanFormatted} / ${lowTomanFormatted} toman</blockquote>\n\n` +
       `<b>${planeEmojiTag} ${dt.full}</b>`;
@@ -1138,10 +1039,10 @@ export class TelegramService {
         try {
           const cardBuffer = await ImageCardService.renderSingleCardPng(
             {
-              name: oilData.name,
+              name: amount > 1 ? `${amount} ${oilData.name}` : oilData.name,
               symbol: oilData.symbol,
-              priceUsd: oilData.priceUsd,
-              priceToman: oilData.priceToman,
+              priceUsd: totalUsd,
+              priceToman: totalToman,
               changePercent: oilData.dayChange,
               category: 'oil',
               unit: oilData.unit,
@@ -1190,10 +1091,12 @@ export class TelegramService {
     const replyToId = isGroup ? msg.message_id : undefined;
     const keyboard = this.getResponseKeyboard(isGroup);
 
-    let amount = 1;
-    const match = text.match(/^(\d+\.?\d*)\s*(?:گرم|مثقال|مظنه|عدد)?\s*(?:طلا|gold|سکه|نقره)?/);
-    if (match && !isNaN(parseFloat(match[1]))) {
-      amount = parseFloat(match[1]);
+    let amount = msg.amount && msg.amount > 0 ? msg.amount : 1;
+    if (amount === 1) {
+      const match = text.match(/^(\d+\.?\d*)\s*(?:گرم|مثقال|مظنه|عدد)?\s*(?:طلا|gold|سکه|نقره)?/);
+      if (match && !isNaN(parseFloat(match[1]))) {
+        amount = parseFloat(match[1]);
+      }
     }
 
     const goldData = await PriceService.getGoldOrCoinItem(text);
@@ -1274,8 +1177,8 @@ export class TelegramService {
         try {
           const cardBuffer = await ImageCardService.renderSingleCardPng(
             {
-              name: 'Gold 18K (طلای ۱۸ عیار)',
-              symbol: 'GOLD18K',
+              name: `${amountStr} ${goldData.title}`,
+              symbol: text.includes('سکه') ? 'SEKE' : (text.includes('نقره') ? 'SILVER' : 'GOLD'),
               priceToman: totalPrice,
               priceUsd: parseFloat(dollarFormatted),
               changePercent: goldData.dayChangePercent,
@@ -1332,7 +1235,7 @@ export class TelegramService {
       text = text.substring(1).trim();
     }
 
-    let amount = 1;
+    let amount = msg.amount && msg.amount > 0 ? msg.amount : 1;
     let coinKey = text;
 
     const persianNumbers: Record<string, number> = {
@@ -1341,23 +1244,25 @@ export class TelegramService {
       'بیست': 20, 'سی': 30, 'چهل': 40, 'پنجاه': 50, 'صد': 100, 'هزار': 1000
     };
 
-    // Check for amount at beginning (e.g. "100 usdt", "50 دلار", "12دلار")
-    const matchStart = text.match(/^(\d+(?:\.\d+)?)\s*(.+)$/);
-    // Check for amount at end (e.g. "usdt 100", "دلار 50")
-    const matchEnd = text.match(/^(.+?)\s*(\d+(?:\.\d+)?)$/);
+    if (amount === 1) {
+      // Check for amount at beginning (e.g. "100 usdt", "50 دلار", "12دلار")
+      const matchStart = text.match(/^(\d+(?:\.\d+)?)\s*(.+)$/);
+      // Check for amount at end (e.g. "usdt 100", "دلار 50")
+      const matchEnd = text.match(/^(.+?)\s*(\d+(?:\.\d+)?)$/);
 
-    if (matchStart && !isNaN(parseFloat(matchStart[1]))) {
-      amount = parseFloat(matchStart[1]);
-      coinKey = matchStart[2].trim();
-    } else if (matchEnd && !isNaN(parseFloat(matchEnd[2]))) {
-      amount = parseFloat(matchEnd[2]);
-      coinKey = matchEnd[1].trim();
-    } else {
-      for (const [w, val] of Object.entries(persianNumbers)) {
-        if (text.startsWith(w) && text.length > w.length) {
-          amount = val;
-          coinKey = text.replace(w, '').trim();
-          break;
+      if (matchStart && !isNaN(parseFloat(matchStart[1]))) {
+        amount = parseFloat(matchStart[1]);
+        coinKey = matchStart[2].trim();
+      } else if (matchEnd && !isNaN(parseFloat(matchEnd[2]))) {
+        amount = parseFloat(matchEnd[2]);
+        coinKey = matchEnd[1].trim();
+      } else {
+        for (const [w, val] of Object.entries(persianNumbers)) {
+          if (text.startsWith(w) && text.length > w.length) {
+            amount = val;
+            coinKey = text.replace(w, '').trim();
+            break;
+          }
         }
       }
     }
@@ -1372,24 +1277,39 @@ export class TelegramService {
       const resolved = await PriceService.resolveAnyAsset(coinKey);
       if (resolved) {
         if (resolved.category === 'gold') {
-          return await this.handleGoldRequest(msg, token);
+          return await this.handleGoldRequest({ ...msg, amount }, token);
         }
         if (resolved.category === 'oil') {
-          return await this.handleOilRequest(msg, token);
+          return await this.handleOilRequest({ ...msg, amount }, token);
         }
         coin = {
           name: resolved.name,
           symbol: resolved.symbol,
-          usdt: resolved.priceUsd || 1.0,
-          irr: resolved.priceToman || 268300,
+          usdt: resolved.priceUsd ? resolved.priceUsd / amount : 1.0,
+          irr: resolved.priceToman ? Math.round(resolved.priceToman / amount) : (coins['usdt']?.irr || 268000),
           dayChange: resolved.dayChange || 0,
-          dayHighToman: resolved.highToman,
-          dayLowToman: resolved.lowToman,
+          dayHighToman: resolved.highToman ? Math.round(resolved.highToman / amount) : undefined,
+          dayLowToman: resolved.lowToman ? Math.round(resolved.lowToman / amount) : undefined,
         };
       }
     }
 
     if (!coin) {
+      if (!isGroup) {
+        const notFoundMsg =
+          `🔍 <b>ارز یا کالای مورد نظر یافت نشد!</b>\n\n` +
+          `💡 برای استعلام و پاسخ به سوالات کافیست نام ارز یا مقدار آن را بنویسید:\n` +
+          `• <code>تتر</code> یا <code>100 تتر</code>\n` +
+          `• <code>دلار</code> یا <code>50 دلار</code>\n` +
+          `• <code>طلا</code> یا <code>سکه امامی</code>\n` +
+          `• <code>بیت کوین</code> یا <code>سولانا</code>\n` +
+          `• <code>/بازار</code> (گزارش تصویری زنده بازار)\n` +
+          `• <code>/app</code> (ورود به مینی‌اپ اختصاصی mini MODASR arz)`;
+        if (chatId) {
+          await this.sendMessage(chatId, notFoundMsg, 'HTML', keyboard, token, replyToId);
+        }
+        return notFoundMsg;
+      }
       return '';
     }
 
