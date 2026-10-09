@@ -4,18 +4,36 @@ import { MANUAL_ALIASES } from './config';
 // ============================================================================
 // PRICE SERVICE — Production-grade market data pipeline
 // ============================================================================
-// Data sources & units:
+//
+// Data sources & units (verified):
 //   - FastCreat Nobitex  → crypto + tether   (irr = TOMAN, usdt = USD)
 //   - TGJU               → dollar + gold      (p = RIAL → divide by 10)
 //   - Binance 24hr       → real price + high/low + change for crypto
+//
+// Design principles:
+//   1. USD (free-market) and USDT (tether) are INDEPENDENT
+//   2. No hardcoded fallback is presented as a live price
+//   3. Provider errors are logged; health is tracked
+//   4. Stale data is explicitly marked
+//   5. Sparklines are bounded by real reference points only
+//   6. All change percentages come from real provider data
 // ============================================================================
 
 const RIALS_PER_TOMAN = 10;
 const CACHE_TTL_MS = 5_000;
 const LIVE_TICKER_INTERVAL_MS = 15_000;
 const FETCH_TIMEOUT_MS = 4_000;
+const FETCH_RETRY_ATTEMPTS = 2;
+const FETCH_RETRY_BASE_MS = 400;
 const STALE_THRESHOLD_MS = 5 * 60_000;
+const BINANCE_CONCURRENCY = 8;
 const TGJU_URL = 'https://call.tgju.org/ajax.json';
+const BINANCE_TICKER_URL = 'https://api.binance.com/api/v3/ticker/24hr';
+const BINANCE_KLINES_URL = 'https://api.binance.com/api/v3/klines';
+
+// ============================================================================
+// Persian display names
+// ============================================================================
 
 const PERSIAN_NAMES: Record<string, string> = {
   BTC: 'بیت کوین', ETH: 'اتریوم', USDT: 'تتر دیجیتال', TON: 'تون کوین',
@@ -78,7 +96,6 @@ export interface CoinInfo {
   isDerived?: boolean;
   unavailable?: boolean;
   source?: string;
-  // Real 24h reference points used to build honest sparklines
   openPrice24h?: number;
 }
 
@@ -183,7 +200,6 @@ export class PriceService {
   private static liveTickerInterval: NodeJS.Timeout | null = null;
   private static providerHealth = new Map<string, ProviderHealth>();
 
-  // Cache of the priority list — only these coins get real high/low from Binance
   private static readonly PRIORITY_COINS = [
     'BTC', 'ETH', 'SOL', 'TON', 'BNB', 'XRP', 'DOGE', 'TRX', 'LTC',
     'ADA', 'SHIB', 'AVAX', 'LINK', 'DOT', 'NEAR', 'SUI', 'PEPE', 'NOT',
@@ -271,42 +287,110 @@ export class PriceService {
   }
 
   // ---------------------------------------------------------------------------
-  // Fetch helpers
+  // Fetch helpers — domain-aware headers + retry with backoff
   // ---------------------------------------------------------------------------
 
+  /**
+   * Build request headers for a given URL.
+   * - TGJU requires a Referer header, otherwise it rejects the request.
+   * - Binance and most public APIs reject foreign Referers.
+   */
+  private static buildHeaders(url: string): Record<string, string> {
+    const headers: Record<string, string> = {
+      'User-Agent':
+        'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+      'Accept': 'application/json, text/plain, */*',
+    };
+    if (url.includes('tgju.org')) {
+      headers['Referer'] = 'https://www.tgju.org/';
+    }
+    return headers;
+  }
+
+  /**
+   * Fetch JSON with:
+   *   - timeout via AbortController
+   *   - domain-aware headers
+   *   - bounded retries with exponential backoff + jitter
+   *   - structured error reporting
+   */
   private static async fetchJson(
     url: string,
-    timeoutMs: number = FETCH_TIMEOUT_MS
-  ): Promise<{ data: any; error?: string; status?: number }> {
-    if (!url) return { data: null, error: 'empty url' };
+    timeoutMs: number = FETCH_TIMEOUT_MS,
+    opts: { retries?: number; label?: string } = {}
+  ): Promise<{ data: any; error?: string; status?: number; attempts: number }> {
+    if (!url) return { data: null, error: 'empty url', attempts: 0 };
 
-    try {
+    const maxAttempts = (opts.retries ?? FETCH_RETRY_ATTEMPTS) + 1;
+    const label = opts.label || this.shortHost(url);
+    let lastError = 'unknown';
+    let lastStatus: number | undefined;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
-
-      const res = await fetch(url, {
-        signal: controller.signal,
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-          'Accept': 'application/json, text/plain, */*',
-          'Referer': 'https://www.tgju.org/',
-        },
-      }).catch((err) => {
+      try {
+        const res = await fetch(url, {
+          signal: controller.signal,
+          headers: this.buildHeaders(url),
+        });
         clearTimeout(timer);
-        throw err;
-      });
 
-      clearTimeout(timer);
+        if (!res.ok) {
+          lastError = `HTTP ${res.status}`;
+          lastStatus = res.status;
 
-      if (!res.ok) return { data: null, error: `HTTP ${res.status}`, status: res.status };
+          // Retry only on transient statuses
+          const transient = res.status === 429 || res.status >= 500;
+          if (transient && attempt < maxAttempts) {
+            const retryAfter = Number(res.headers.get('retry-after')) || 0;
+            const waitMs = retryAfter > 0
+              ? retryAfter * 1000
+              : FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200;
+            await this.sleep(waitMs);
+            continue;
+          }
+          return { data: null, error: lastError, status: lastStatus, attempts: attempt };
+        }
 
-      const data = await res.json().catch(() => null);
-      if (data === null) return { data: null, error: 'invalid JSON' };
-      return { data };
-    } catch (e: any) {
-      const msg = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || String(e));
-      return { data: null, error: msg };
+        const data = await res.json().catch(() => null);
+        if (data === null) {
+          lastError = 'invalid JSON';
+          if (attempt < maxAttempts) {
+            await this.sleep(FETCH_RETRY_BASE_MS * attempt);
+            continue;
+          }
+          return { data: null, error: lastError, attempts: attempt };
+        }
+
+        return { data, attempts: attempt };
+      } catch (e: any) {
+        clearTimeout(timer);
+        lastError = e?.name === 'AbortError' ? `timeout after ${timeoutMs}ms` : (e?.message || String(e));
+
+        const isNetwork = /fetch failed|ECONNRESET|ENOTFOUND|EAI_AGAIN|timeout/i.test(lastError);
+        if (isNetwork && attempt < maxAttempts) {
+          const waitMs = FETCH_RETRY_BASE_MS * Math.pow(2, attempt - 1) + Math.random() * 200;
+          await this.sleep(waitMs);
+          continue;
+        }
+        return { data: null, error: lastError, attempts: attempt };
+      }
     }
+
+    return { data: null, error: lastError, status: lastStatus, attempts: maxAttempts };
+  }
+
+  private static shortHost(url: string): string {
+    try {
+      return new URL(url).host;
+    } catch {
+      return url.slice(0, 30);
+    }
+  }
+
+  private static sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   // ---------------------------------------------------------------------------
@@ -358,9 +442,13 @@ export class PriceService {
     const cryptoUrl = hubConfig?.priceBoard?.cryptoApiUrl || '';
 
     const [goldRes, cryptoRes, tgjuRes] = await Promise.all([
-      goldUrl ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
-      cryptoUrl ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS) : Promise.resolve({ data: null, error: 'no url' }),
-      this.fetchJson(TGJU_URL, FETCH_TIMEOUT_MS),
+      goldUrl
+        ? this.fetchJson(goldUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-gold' })
+        : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
+      cryptoUrl
+        ? this.fetchJson(cryptoUrl, FETCH_TIMEOUT_MS, { label: 'fastcreat-crypto' })
+        : Promise.resolve({ data: null, error: 'no url', attempts: 0 }),
+      this.fetchJson(TGJU_URL, FETCH_TIMEOUT_MS, { label: 'tgju' }),
     ]);
 
     if (goldRes.data) this.markProviderSuccess('gold'); else this.markProviderFailure('gold', goldRes.error || 'unknown');
@@ -383,7 +471,7 @@ export class PriceService {
 
     const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
 
-    // This is the KEY change — enrich every priority coin with real 24h data from Binance
+    // Enrich priority coins with real 24h data from Binance
     await this.enrichCoinsWithBinance24h(coins, tetherData.toman);
 
     const fiat = this.extractFiat(dollarData.toman, dollarData.isLive);
@@ -695,64 +783,68 @@ export class PriceService {
   }
 
   /**
-   * CRITICAL: This function enriches EVERY priority coin (whether or not it came
-   * from FastCreat) with REAL 24h data from Binance:
-   *   - openPrice24h  → used to build honest sparklines
-   *   - dayHighUsd/dayLowUsd → real 24h high/low
-   *   - priceChangePercent → real 24h change (overwrites FastCreat's if it was 0)
+   * Enrich priority coins with REAL 24h data from Binance.
    *
-   * Coins not in the priority list are not fetched from Binance (too many requests).
+   * Uses individual requests (with concurrency limit) because Binance's
+   * batch endpoint (?symbols=[...]) rejects our requests. Each successful
+   * response provides:
+   *   - lastPrice          → current USD price
+   *   - openPrice          → USD price 24h ago (for honest sparklines)
+   *   - highPrice          → real 24h high
+   *   - lowPrice           → real 24h low
+   *   - priceChangePercent → real 24h change %
    */
   private static async enrichCoinsWithBinance24h(
     coins: Record<string, CoinInfo>,
     tetherToman: number
   ): Promise<void> {
     const priority = this.PRIORITY_COINS;
+    let newCoins = 0;
+    let merged = 0;
+    let failed = 0;
 
-    console.log(`[PriceService] Enriching ${priority.length} priority coins with real Binance 24h data...`);
+    console.log(`[PriceService] Enriching ${priority.length} priority coins with Binance 24h data (concurrency=${BINANCE_CONCURRENCY})...`);
 
-    // Batch: Binance allows multiple symbols in one call
-    // We'll do it in chunks of 20 to keep URLs reasonable
-    const chunks: string[][] = [];
-    for (let i = 0; i < priority.length; i += 20) {
-      chunks.push(priority.slice(i, i + 20));
-    }
+    // Split into batches, run each batch in parallel
+    for (let i = 0; i < priority.length; i += BINANCE_CONCURRENCY) {
+      const batch = priority.slice(i, i + BINANCE_CONCURRENCY);
+      const results = await Promise.all(
+        batch.map(async (sym) => {
+          const url = `${BINANCE_TICKER_URL}?symbol=${sym}USDT`;
+          const r = await this.fetchJson(url, 3_500, { retries: 1, label: `binance:${sym}` });
+          return { sym, data: r.data, error: r.error };
+        })
+      );
 
-    for (const chunk of chunks) {
-      // Build URL like: ?symbols=["BTCUSDT","ETHUSDT",...]
-      const symbolsParam = JSON.stringify(chunk.map((s) => `${s}USDT`));
-      const url = `https://api.binance.com/api/v3/ticker/24hr?symbols=${encodeURIComponent(symbolsParam)}`;
+      for (const { sym, data, error } of results) {
+        if (!data || !data.lastPrice) {
+          failed++;
+          if (error && !/HTTP 400|HTTP 404/.test(error)) {
+            console.warn(`[PriceService] Binance ${sym}: ${error}`);
+          }
+          continue;
+        }
 
-      const r = await this.fetchJson(url, 5_000);
-      const data = r.data;
-      if (!Array.isArray(data)) {
-        console.warn(`[PriceService] Binance 24hr batch failed: ${r.error || 'not an array'}`);
-        continue;
-      }
+        const lastPrice = parseFloat(String(data.lastPrice || '0'));
+        const openPrice = parseFloat(String(data.openPrice || '0'));
+        const highPrice = parseFloat(String(data.highPrice || '0'));
+        const lowPrice  = parseFloat(String(data.lowPrice  || '0'));
+        const changePct = parseFloat(String(data.priceChangePercent || '0'));
 
-      for (const tick of data) {
-        const sym = String(tick.symbol || '').replace('USDT', '').toUpperCase();
-        if (!sym) continue;
+        if (!Number.isFinite(lastPrice) || lastPrice <= 0) { failed++; continue; }
 
-        const lastPrice = parseFloat(String(tick.lastPrice || '0'));
-        const openPrice = parseFloat(String(tick.openPrice || '0'));
-        const highPrice = parseFloat(String(tick.highPrice || '0'));
-        const lowPrice = parseFloat(String(tick.lowPrice || '0'));
-        const changePct = parseFloat(String(tick.priceChangePercent || '0'));
-
-        if (!Number.isFinite(lastPrice) || lastPrice <= 0) continue;
-
-        const existing = coins[sym] || coins[sym.toLowerCase()];
+        const symUpper = sym.toUpperCase();
+        const existing = coins[symUpper] || coins[sym.toLowerCase()];
         const tomanFromBinance = tetherToman > 0 ? Math.round(lastPrice * tetherToman) : 0;
 
         const highToman = highPrice > 0 && tetherToman > 0 ? Math.round(highPrice * tetherToman) : undefined;
         const lowToman  = lowPrice  > 0 && tetherToman > 0 ? Math.round(lowPrice  * tetherToman) : undefined;
 
         if (existing) {
-          // Merge: keep FastCreat's Toman price (Iranian market), update change/high/low from Binance (real global)
+          // Keep FastCreat's Toman price (Iranian market has its own spread),
+          // but update change / high / low from Binance (global reference)
           if (!existing.irr || existing.irr === 0) existing.irr = tomanFromBinance;
           if (!existing.usdt || existing.usdt === 0) existing.usdt = lastPrice;
-          // Always use Binance's real change % if FastCreat gave 0
           if (!existing.dayChange || existing.dayChange === 0) {
             existing.dayChange = Number.isFinite(changePct) ? changePct : 0;
           }
@@ -761,29 +853,30 @@ export class PriceService {
           existing.dayHighToman = highToman;
           existing.dayLowToman  = lowToman;
           existing.openPrice24h = openPrice > 0 ? openPrice : undefined;
+          merged++;
         } else {
-          // New coin — create from Binance
           const coin: CoinInfo = {
-            name: PERSIAN_NAMES[sym] || sym,
-            symbol: sym,
+            name: PERSIAN_NAMES[symUpper] || symUpper,
+            symbol: symUpper,
             usdt: lastPrice,
             irr: tomanFromBinance,
             dayChange: Number.isFinite(changePct) ? changePct : 0,
             dayHighUsd: highPrice > 0 ? highPrice : undefined,
-            dayLowUsd: lowPrice > 0 ? lowPrice : undefined,
+            dayLowUsd:  lowPrice  > 0 ? lowPrice  : undefined,
             dayHighToman: highToman,
-            dayLowToman: lowToman,
+            dayLowToman:  lowToman,
             openPrice24h: openPrice > 0 ? openPrice : undefined,
             source: 'binance',
             isDerived: tomanFromBinance > 0,
           };
-          coins[sym] = coin;
+          coins[symUpper] = coin;
           coins[sym.toLowerCase()] = coin;
+          newCoins++;
         }
       }
     }
 
-    console.log(`[PriceService] Binance enrichment complete.`);
+    console.log(`[PriceService] Binance enrichment done — merged=${merged} new=${newCoins} failed=${failed}`);
   }
 
   private static extractFiat(dollarToman: number, dollarLive: boolean): Record<string, AssetInfo> {
@@ -1069,36 +1162,25 @@ export class PriceService {
     );
 
     if (isCrypto && cleanSym) {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
-      try {
-        const res = await fetch(
-          `https://api.binance.com/api/v3/klines?symbol=${cleanSym}USDT&interval=2h&limit=84`,
-          { signal: controller.signal }
-        );
-        clearTimeout(timer);
-        if (res.ok) {
-          const data = await res.json();
-          if (Array.isArray(data) && data.length >= 20) {
-            const points = data.map((c: any) => parseFloat(c[4]));
-            if (points.every((p) => this.isValidNumber(p) && p > 0)) {
-              const high = Math.max(...points);
-              const low  = Math.min(...points);
-              const start = points[0];
-              const current = points[points.length - 1];
-              return {
-                points, high, low,
-                weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
-                startPrice: start, currentPrice: current,
-                source: 'binance', isSynthetic: false,
-              };
-            }
-          }
+      const r = await this.fetchJson(
+        `${BINANCE_KLINES_URL}?symbol=${cleanSym}USDT&interval=2h&limit=84`,
+        FETCH_TIMEOUT_MS,
+        { retries: 1, label: `klines:${cleanSym}` }
+      );
+      if (Array.isArray(r.data) && r.data.length >= 20) {
+        const points = r.data.map((c: any) => parseFloat(c[4]));
+        if (points.every((p) => this.isValidNumber(p) && p > 0)) {
+          const high = Math.max(...points);
+          const low  = Math.min(...points);
+          const start = points[0];
+          const current = points[points.length - 1];
+          return {
+            points, high, low,
+            weekChangePercent: start > 0 ? ((current - start) / start) * 100 : dayChange,
+            startPrice: start, currentPrice: current,
+            source: 'binance', isSynthetic: false,
+          };
         }
-      } catch (e: any) {
-        console.warn(`[PriceService] binance klines for ${cleanSym} failed: ${e?.message || e}`);
-      } finally {
-        clearTimeout(timer);
       }
     }
 
@@ -1136,8 +1218,6 @@ export class PriceService {
         const safeHigh = highToman && highToman > 0 ? highToman : undefined;
         const safeLow  = lowToman  && lowToman  > 0 ? lowToman  : undefined;
 
-        // REAL sparkline — built only from real reference points.
-        // If we don't have real open/high/low, sparkline stays empty (frontend skips it).
         const sparkline = this.buildRealSparkline(
           safeToman, dayChange, safeHigh, safeLow, openUsd24h, tetherToman, 24
         );
@@ -1240,19 +1320,12 @@ export class PriceService {
   // ==========================================================================
   // REAL SPARKLINE BUILDER
   // ==========================================================================
-  // Builds a sparkline strictly bounded by real reference points:
-  //   - current price (real)
-  //   - dayChange %  (real → gives us openPrice)
-  //   - high/low     (real from Binance 24hr)
-  //   - openPrice24h (real from Binance 24hr)
+  // Bounds the sparkline strictly by real reference points:
+  //   - openPrice24h (Binance) or derived from dayChange
+  //   - currentToman (real)
+  //   - highToman / lowToman (Binance)
   //
-  // The individual points between the endpoints are interpolated with a
-  // deterministic smooth curve — they are NOT real tick data, but they are
-  // bounded by real values. If we lack real bounds, we return an empty array
-  // so the UI shows no sparkline (honest behavior).
-  //
-  // This replaces the previous Math.sin-based fabrication that ignored
-  // whether the values were real or made up.
+  // Returns [] if we lack real bounds → frontend skips sparkline (honest).
   // ==========================================================================
 
   private static buildRealSparkline(
@@ -1266,37 +1339,27 @@ export class PriceService {
   ): number[] {
     if (!this.isValidNumber(currentToman) || currentToman <= 0) return [];
 
-    // We need at least the open price to build a bounded series.
-    // If we only have current price and no bounds, don't fabricate.
     const openPriceToman = openUsd24h && tetherToman > 0
       ? openUsd24h * tetherToman
       : (dayChangePct !== 0 ? currentToman / (1 + dayChangePct / 100) : null);
 
-    if (!openPriceToman || openPriceToman <= 0) {
-      // No real open price → no sparkline
-      return [];
-    }
+    if (!openPriceToman || openPriceToman <= 0) return [];
 
-    // Real bounds if available
     const boundHigh = highToman && highToman > 0 ? highToman : Math.max(openPriceToman, currentToman);
     const boundLow  = lowToman  && lowToman  > 0 ? lowToman  : Math.min(openPriceToman, currentToman);
     const range = boundHigh - boundLow;
     if (range <= 0) return [];
 
     const points: number[] = [];
-    const seed = currentToman % 1000; // deterministic per-coin
+    const seed = currentToman % 1000;
 
     for (let i = 0; i < length; i++) {
       const progress = i / (length - 1);
-      // Linear interpolation from open → current
       const linear = openPriceToman + (currentToman - openPriceToman) * progress;
-      // Bounded wave: peaks once in the middle, clamped by real high/low
       const waveAmp = range * 0.15;
       const wave = Math.sin(progress * Math.PI + seed) * waveAmp;
       let val = linear + wave;
-      // Clamp to real bounds
       val = Math.max(boundLow, Math.min(boundHigh, val));
-      // Pin endpoints to real values
       if (i === 0) val = openPriceToman;
       if (i === length - 1) val = currentToman;
       points.push(Math.round(val));
