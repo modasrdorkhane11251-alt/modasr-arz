@@ -29,6 +29,21 @@ import {
 
 dotenv.config();
 
+// ============================================================================
+// CRASH GUARDS — keep the process alive on unexpected errors
+// ============================================================================
+process.on('uncaughtException', (err: any) => {
+  console.error('🚨 UNCAUGHT EXCEPTION:', err?.message || err);
+  if (err?.stack) console.error(err.stack);
+  // Do NOT exit — keep running so the panel stays up
+});
+
+process.on('unhandledRejection', (reason: any) => {
+  console.error('🚨 UNHANDLED REJECTION:', reason?.message || reason);
+  if (reason?.stack) console.error(reason.stack);
+  // Do NOT exit
+});
+
 const app = express();
 const portArgIndex = process.argv.indexOf('--port');
 const cliPort = portArgIndex !== -1 ? parseInt(process.argv[portArgIndex + 1], 10) : null;
@@ -810,12 +825,9 @@ app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => 
 });
 
 // ============================================================================
-// NEW: Bot Credentials (token + admin ID) from admin panel
+// Bot Credentials (token + admin ID) — from admin panel
 // ============================================================================
 
-/**
- * GET current credential status (masked — token never sent to browser)
- */
 app.get('/api/config/credentials/status', (_req: Request, res: Response) => {
   const token = process.env.BOT_TOKEN || '';
   const adminId = process.env.ADMIN_ID || '';
@@ -834,10 +846,6 @@ app.get('/api/config/credentials/status', (_req: Request, res: Response) => {
   });
 });
 
-/**
- * POST new credentials — writes to .env and restarts the PM2 service.
- * Validates the token against Telegram's getMe before saving.
- */
 app.post('/api/config/credentials', async (req: Request, res: Response) => {
   try {
     const { botToken, adminId, botUsername } = req.body || {};
@@ -845,7 +853,6 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
     const updates: Record<string, string> = {};
     const errors: string[] = [];
 
-    // ---- Validate + verify token ------------------------------------------
     if (botToken !== undefined && botToken !== '') {
       const token = String(botToken).trim();
       if (!/^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$/.test(token)) {
@@ -866,7 +873,6 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
       }
     }
 
-    // ---- Validate admin ID -------------------------------------------------
     if (adminId !== undefined && adminId !== '') {
       const aid = String(adminId).trim();
       if (!/^[0-9]{5,15}$/.test(aid)) {
@@ -876,7 +882,6 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
       }
     }
 
-    // ---- Optional bot username override -----------------------------------
     if (botUsername !== undefined && botUsername !== '') {
       const uname = String(botUsername).trim().replace(/^@/, '');
       if (/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(uname)) {
@@ -892,20 +897,17 @@ app.post('/api/config/credentials', async (req: Request, res: Response) => {
       return res.status(400).json({ ok: false, message: 'هیچ مقدار جدیدی ارسال نشد' });
     }
 
-    // ---- Write to .env ----------------------------------------------------
     const result = BotStorage.updateEnvCredentials(updates);
     if (!result.ok) {
       return res.status(500).json({ ok: false, message: `خطا در ذخیره‌سازی: ${result.message}` });
     }
 
-    // ---- Log ---------------------------------------------------------------
     BotStorage.addLog({
       type: 'system',
       text: `تنظیمات ورود ربات از پنل به‌روزرسانی شد: ${Object.keys(updates).join(', ')}`,
       status: 'success',
     });
 
-    // ---- Restart PM2 in background -----------------------------------------
     BotStorage.restartServiceSoon(800);
 
     return res.json({
@@ -926,8 +928,8 @@ app.get('/api/prices', async (req: Request, res: Response) => {
       ok: true,
       status: 'online',
       provider: 'MODASR_ARZ_API_GATEWAY_1',
-      goldPriceToman: snapshot.gold.gold18.tomanPrice,
-      goldDayChange: snapshot.gold.gold18.dayChangePercent,
+      goldPriceToman: snapshot.gold.gold18?.tomanPrice || 0,
+      goldDayChange: snapshot.gold.gold18?.dayChangePercent || 0,
       tether: snapshot.tether,
       dollar: snapshot.dollar,
       coins: snapshot.coins,
@@ -1026,11 +1028,11 @@ app.get('/api/bot/prices', async (req: Request, res: Response) => {
 
     return res.json({
       ok: true,
-      goldPriceRials: gold18.tomanPrice * 10,
-      goldPriceToman: gold18.tomanPrice,
-      goldDayChange: gold18.dayChangePercent,
-      goldHighToman: gold18.highToman,
-      goldLowToman: gold18.lowToman,
+      goldPriceRials: (gold18?.tomanPrice || 0) * 10,
+      goldPriceToman: gold18?.tomanPrice || 0,
+      goldDayChange: gold18?.dayChangePercent || 0,
+      goldHighToman: gold18?.highToman || 0,
+      goldLowToman: gold18?.lowToman || 0,
       oilPrice: snapshot.oil.brent,
       coins: snapshot.coins,
       tether: snapshot.tether,
