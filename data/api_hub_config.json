@@ -1,0 +1,51 @@
+{
+  "priceBoard": {
+    "primaryProvider": "fast_creat",
+    "goldApiUrl": "https://api.fast-creat.ir/gold?apikey=6750948508:ZqGU7X4Vj05BwLt@Api_ManagerRoBot",
+    "goldSecondaryApiUrl": "https://call.tgju.org/ajax.json",
+    "fiatApiUrl": "https://call.tgju.org/ajax.json",
+    "cryptoApiUrl": "https://api.fast-creat.ir/nobitex/v2?apikey=6750948508:dNoLxDYryOH7QS5@Api_ManagerRoBot",
+    "cryptoSecondaryApiUrl": "https://api.wallex.ir/v1/markets",
+    "oilEnergyApiUrl": "https://call.tgju.org/ajax.json",
+    "oilEnergySecondaryApiUrl": "https://api.oilpriceapi.com/v1/prices/latest",
+    "dualApiEnabled": true,
+    "enforceConfiguredApisOnly": true,
+    "refreshIntervalSec": 2,
+    "customJsonEndpoint": "",
+    "apiKeyHeaderName": "",
+    "apiKeyHeaderValue": "",
+    "enableRechartsTrends": true
+  },
+  "miniApp": {
+    "dataEndpoint": "/api/miniapp/data",
+    "responseEndpoint": "/api/bot/response",
+    "dualApiEnabled": true,
+    "aiQueryEnabled": true,
+    "aiProvider": "internal_engine",
+    "aiApiKey": "",
+    "aiSystemPrompt": "دستیار و موتور هوشمند پردازش و پاسخگویی به استعلامات طلا، ارز و کریپتو مینی‌اپ",
+    "refreshIntervalSec": 2,
+    "show24hChartSparklines": true,
+    "autoCacheTtlSec": 2,
+    "customWebhookUrl": ""
+  },
+  "channelReport": {
+    "isEnabled": true,
+    "botToken": "",
+    "channelUsernameOrId": "@MODASR_ARZ",
+    "postIntervalMinutes": 60,
+    "postTemplateMode": "image_card_and_summary",
+    "reportTitle": "📊 گزارش و بولتن زنده بازار ارز و طلا",
+    "include24hChange": true,
+    "includeHighLow": true,
+    "includeWatermark": true,
+    "customBroadcastWebhookUrl": ""
+  },
+  "developer": {
+    "adminApiKey": "",
+    "publicRestApiEnabled": true,
+    "webhookUrl": "",
+    "customCorsAllowedOrigins": "*",
+    "lastTestedAt": ""
+  }
+}

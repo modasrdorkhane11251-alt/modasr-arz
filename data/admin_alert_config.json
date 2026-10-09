@@ -1,0 +1,10 @@
+{
+  "isEnabled": true,
+  "adminId": 0,
+  "notifyOnApiErrors": true,
+  "notifyOnTelegramErrors": true,
+  "notifyOnChannelErrors": true,
+  "notifyOnUserBugReports": true,
+  "minSeverity": "all",
+  "rateLimitMinutes": 2
+}
