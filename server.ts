@@ -2,6 +2,7 @@ import express, { Request, Response } from 'express';
 import dotenv from 'dotenv';
 import path from 'path';
 import fs from 'fs';
+import { exec } from 'child_process';
 import { BOT_CONFIG, DEFAULT_BOT_TOKEN } from './src/bot/config';
 import { BotStorage } from './src/bot/storage';
 import { TelegramService, TelegramUpdate } from './src/bot/telegramService';
@@ -42,7 +43,7 @@ app.use((_req, res, next) => {
   next();
 });
 
-// Ping / Health Endpoint for Latency Testing
+// Ping / Health Endpoint
 app.get('/api/ping', (_req: Request, res: Response) => {
   res.setHeader('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   return res.json({
@@ -92,7 +93,7 @@ app.post('/api/auth/logout', (req: Request, res: Response) => {
   return res.json({ ok: true });
 });
 
-// 0. Backup & Restore (پشتیبان‌گیری کامل دیتابیس، دکمه‌ها و تنظیمات)
+// 0. Backup & Restore
 app.get(['/api/backup/export', '/api/backup/download'], (req: Request, res: Response) => {
   try {
     const backup = BotStorage.exportBackup();
@@ -149,7 +150,7 @@ app.post('/api/telegram/webhook', async (req: Request, res: Response) => {
   try {
     const update: TelegramUpdate = req.body;
     const token = (req.query.token as string) || BOT_CONFIG.token;
-    
+
     BotStorage.addLog({
       type: 'webhook_event',
       text: update.message?.text || (update.callback_query ? `CB: ${update.callback_query.data}` : 'Update received'),
@@ -218,8 +219,7 @@ app.post('/api/telegram/set-webhook', async (req: Request, res: Response) => {
   try {
     const { url, dropPendingUpdates, token } = req.body;
     const activeToken = token || BOT_CONFIG.token;
-    
-    // Stop Polling when setting webhook and wait for in-flight getUpdates to disconnect
+
     PollingService.stop();
     await new Promise((r) => setTimeout(r, 1000));
 
@@ -230,7 +230,7 @@ app.post('/api/telegram/set-webhook', async (req: Request, res: Response) => {
     }
 
     const result = await WebhookManager.setWebhook(targetUrl, !!dropPendingUpdates, activeToken);
-    
+
     BotStorage.addLog({
       type: 'system',
       text: `تنظیم وبهوک به آدرس: ${targetUrl}`,
@@ -249,7 +249,7 @@ app.post('/api/telegram/delete-webhook', async (req: Request, res: Response) => 
     const { dropPendingUpdates, token } = req.body;
     const activeToken = token || BOT_CONFIG.token;
     const result = await WebhookManager.deleteWebhook(!!dropPendingUpdates, activeToken);
-    
+
     BotStorage.addLog({
       type: 'system',
       text: 'حذف وبهوک تلگرام',
@@ -302,7 +302,6 @@ app.get('/api/bot/stats', (req: Request, res: Response) => {
   });
 });
 
-// 6.1 Dedicated Activity Logs & Clear
 app.get('/api/bot/logs', (req: Request, res: Response) => {
   const limit = req.query.limit ? Number(req.query.limit) : 100;
   return res.json({ ok: true, logs: BotStorage.getLogs(limit) });
@@ -320,12 +319,11 @@ app.post('/api/bot/status', (req: Request, res: Response) => {
   return res.json({ ok: true, isEnabled: BotStorage.getBotStatus() });
 });
 
-// 7.1 Ad & Sponsor Button Configuration + Dynamic Custom Buttons
+// 7.1 Ad & Sponsor Button Configuration
 app.get('/api/bot/ad-config', (req: Request, res: Response) => {
   return res.json({ ok: true, adConfig: BotStorage.getAdConfig() });
 });
 
-// 7.15 Global Keyboard HEX Color Theme Studio (تنظیم کدهای رنگی سفارشی کیبورد شیشه‌ای)
 app.get('/api/bot/keyboard-theme', (req: Request, res: Response) => {
   return res.json({
     ok: true,
@@ -454,7 +452,7 @@ app.post('/api/bot/emoji-bulk-import', (req: Request, res: Response) => {
   return res.json({ ok: true, emojiConfig: updated });
 });
 
-// 7.3 Visual Card Preview (PNG Render)
+// 7.3 Visual Card Preview
 app.get('/api/bot/card-preview', async (req: Request, res: Response) => {
   try {
     const symbol = ((req.query.symbol as string) || 'BTC').toUpperCase();
@@ -497,7 +495,7 @@ app.get('/api/bot/grid-preview', async (req: Request, res: Response) => {
   }
 });
 
-// 7.4 Admin Private Error Alerts & Bug Reporting
+// 7.4 Admin Private Error Alerts
 app.get('/api/bot/alert-config', (req: Request, res: Response) => {
   return res.json({ ok: true, alertConfig: BotStorage.getAdminAlertConfig() });
 });
@@ -526,7 +524,7 @@ app.post('/api/bot/broadcast', async (req: Request, res: Response) => {
   }
 });
 
-// 8.2 Mini App Data & Interactive Charts (CoinPJ / Qeymat style)
+// 8.2 Mini App Data
 app.get('/api/miniapp/data', async (req: Request, res: Response) => {
   try {
     const data = await PriceService.getMiniAppData();
@@ -568,6 +566,7 @@ app.get('/api/miniapp/chart/:symbol', async (req: Request, res: Response) => {
     return res.status(500).json({ ok: false, error: error.message });
   }
 });
+
 app.get('/api/channel/config', (req: Request, res: Response) => {
   const config = BotStorage.getChannelPosterConfig();
   const now = Date.now();
@@ -599,15 +598,13 @@ app.post('/api/channel/post-now', async (req: Request, res: Response) => {
   }
 });
 
-// 8.5 Comprehensive API Hub & Connections Manager (مرکز مدیریت و تنظیمات جامع APIها)
-// (تنظیمات API تابلوی زنده قیمت‌ها، مینی‌اپ پاسخ، چنل گزارش و وب‌هوک‌ها)
+// 8.5 API Hub Config
 app.get('/api/config/apis', (_req: Request, res: Response) => {
   return res.json({ ok: true, config: BotStorage.getApiHubConfig() });
 });
 
 app.post('/api/config/apis', (req: Request, res: Response) => {
   const updated = BotStorage.setApiHubConfig(req.body);
-  // Synchronize channel poster config if channelReport fields were modified
   if (req.body?.channelReport) {
     const cr = req.body.channelReport;
     BotStorage.setChannelPosterConfig({
@@ -688,7 +685,6 @@ app.post('/api/config/apis/test', async (req: Request, res: Response) => {
   }
 });
 
-// Test All Configured APIs in Parallel (تست و پینگ زنده تمامی APIها همزمان)
 app.post('/api/config/apis/test-all', async (_req: Request, res: Response) => {
   const config = BotStorage.getApiHubConfig();
   const testItems = [
@@ -741,7 +737,6 @@ app.post('/api/config/apis/test-all', async (_req: Request, res: Response) => {
             message: `متصل (${lat}ms)`,
           };
         } else {
-          // Fallback check
           results[item.key] = {
             name: item.name,
             url: item.url,
@@ -774,7 +769,6 @@ app.post('/api/config/apis/test-all', async (_req: Request, res: Response) => {
   });
 });
 
-// Connect All APIs Immediately (برقراری اتصال قطعی کلیه APIها به همراه حالت سخت‌گیرانه)
 app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => {
   const current = BotStorage.getApiHubConfig();
   const incoming = req.body || {};
@@ -786,7 +780,7 @@ app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => 
       ...current.priceBoard,
       ...(incoming.priceBoard || {}),
       dualApiEnabled: true,
-      enforceConfiguredApisOnly: true, // فقط و فقط APIهای داده شده متصل بشند
+      enforceConfiguredApisOnly: true,
     },
     miniApp: {
       ...current.miniApp,
@@ -813,6 +807,115 @@ app.post('/api/config/apis/connect-all', async (req: Request, res: Response) => 
     message: 'تمامی APIها با موفقیت متصل و همگام شدند. کلیه سرویس‌ها به APIهای اختصاصی متصل شدند.',
     config: merged,
   });
+});
+
+// ============================================================================
+// NEW: Bot Credentials (token + admin ID) from admin panel
+// ============================================================================
+
+/**
+ * GET current credential status (masked — token never sent to browser)
+ */
+app.get('/api/config/credentials/status', (_req: Request, res: Response) => {
+  const token = process.env.BOT_TOKEN || '';
+  const adminId = process.env.ADMIN_ID || '';
+  const botUsername = process.env.BOT_USERNAME || '';
+
+  const maskedToken = token
+    ? `${token.substring(0, 10)}...${token.slice(-5)}`
+    : '';
+
+  return res.json({
+    ok: true,
+    hasToken: token.length > 0,
+    maskedToken,
+    adminId: adminId || '',
+    botUsername: botUsername || '',
+  });
+});
+
+/**
+ * POST new credentials — writes to .env and restarts the PM2 service.
+ * Validates the token against Telegram's getMe before saving.
+ */
+app.post('/api/config/credentials', async (req: Request, res: Response) => {
+  try {
+    const { botToken, adminId, botUsername } = req.body || {};
+
+    const updates: Record<string, string> = {};
+    const errors: string[] = [];
+
+    // ---- Validate + verify token ------------------------------------------
+    if (botToken !== undefined && botToken !== '') {
+      const token = String(botToken).trim();
+      if (!/^[0-9]{6,12}:[A-Za-z0-9_-]{30,}$/.test(token)) {
+        errors.push('فرمت توکن نامعتبر است');
+      } else {
+        try {
+          const r = await fetch(`https://api.telegram.org/bot${token}/getMe`);
+          const data: any = await r.json().catch(() => null);
+          if (!data?.ok) {
+            errors.push('تلگرام این توکن را نپذیرفت');
+          } else {
+            updates.BOT_TOKEN = token;
+            if (data.result?.username) updates.BOT_USERNAME = data.result.username;
+          }
+        } catch {
+          errors.push('اتصال به تلگرام برقرار نشد');
+        }
+      }
+    }
+
+    // ---- Validate admin ID -------------------------------------------------
+    if (adminId !== undefined && adminId !== '') {
+      const aid = String(adminId).trim();
+      if (!/^[0-9]{5,15}$/.test(aid)) {
+        errors.push('آیدی ادمین باید فقط عدد باشد (۵ تا ۱۵ رقم)');
+      } else {
+        updates.ADMIN_ID = aid;
+      }
+    }
+
+    // ---- Optional bot username override -----------------------------------
+    if (botUsername !== undefined && botUsername !== '') {
+      const uname = String(botUsername).trim().replace(/^@/, '');
+      if (/^[A-Za-z][A-Za-z0-9_]{4,31}$/.test(uname)) {
+        updates.BOT_USERNAME = uname;
+      }
+    }
+
+    if (errors.length > 0) {
+      return res.status(400).json({ ok: false, errors, message: errors.join(' • ') });
+    }
+
+    if (Object.keys(updates).length === 0) {
+      return res.status(400).json({ ok: false, message: 'هیچ مقدار جدیدی ارسال نشد' });
+    }
+
+    // ---- Write to .env ----------------------------------------------------
+    const result = BotStorage.updateEnvCredentials(updates);
+    if (!result.ok) {
+      return res.status(500).json({ ok: false, message: `خطا در ذخیره‌سازی: ${result.message}` });
+    }
+
+    // ---- Log ---------------------------------------------------------------
+    BotStorage.addLog({
+      type: 'system',
+      text: `تنظیمات ورود ربات از پنل به‌روزرسانی شد: ${Object.keys(updates).join(', ')}`,
+      status: 'success',
+    });
+
+    // ---- Restart PM2 in background -----------------------------------------
+    BotStorage.restartServiceSoon(800);
+
+    return res.json({
+      ok: true,
+      saved: Object.keys(updates),
+      message: '✅ ذخیره شد. سرور در حدود ۱ ثانیه دیگر ری‌استارت می‌شود.',
+    });
+  } catch (e: any) {
+    return res.status(500).json({ ok: false, message: e?.message || 'خطای غیرمنتظره' });
+  }
 });
 
 // 9. Live Prices for Web Ticker & Public REST Gateway 1
@@ -872,7 +975,7 @@ app.get('/api/rates', async (req: Request, res: Response) => {
   }
 });
 
-// Mini-App Response & Bot Inquiry API 2 (وب‌سرویس پاسخ هوشمند مینی‌اپ و استعلام)
+// Mini-App Response & Bot Inquiry API 2
 app.all('/api/bot/response', async (req: Request, res: Response) => {
   try {
     const query = String(req.query.q || req.query.text || req.body?.q || req.body?.text || req.body?.query || '').trim();
@@ -901,16 +1004,13 @@ app.all('/api/bot/response', async (req: Request, res: Response) => {
       });
     }
 
-    // Default overview response
     const gold = await PriceService.getGoldPrice();
     return res.json({
       ok: true,
       query,
       found: false,
       message: 'استعلام دریافت شد.',
-      summary: {
-        gold18k: gold?.tomanPrice,
-      },
+      summary: { gold18k: gold?.tomanPrice },
       timestamp: Date.now(),
     });
   } catch (err: any) {
@@ -945,7 +1045,7 @@ app.get('/api/bot/prices', async (req: Request, res: Response) => {
   }
 });
 
-// 10. Simulator Endpoint for Web Testing
+// 10. Simulator Endpoint
 app.post('/api/bot/simulate', async (req: Request, res: Response) => {
   try {
     const { text, fromId, chatId, isGroup, chatType } = req.body;
@@ -1005,17 +1105,14 @@ app.post('/api/bot/simulate', async (req: Request, res: Response) => {
   }
 });
 
-// Vite Integration for Fullstack Web UI
+// Vite Integration
 async function startServer() {
   const isProduction = process.env.NODE_ENV === 'production';
 
   if (!isProduction) {
     const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
-      server: {
-        middlewareMode: true,
-        hmr: false,
-      },
+      server: { middlewareMode: true, hmr: false },
       appType: 'spa',
     });
     app.use(vite.middlewares);
@@ -1031,29 +1128,25 @@ async function startServer() {
 
   const server = app.listen(PORT, '0.0.0.0', async () => {
     console.log(`🚀 Telegram Bot Server running on http://0.0.0.0:${PORT}`);
-    
-    // Start Long Polling immediately so the bot responds on Telegram instantly!
+
     try {
       await PollingService.start(BOT_CONFIG.token);
     } catch (e) {
       console.warn('Initial polling start notice:', e);
     }
 
-    // Start Auto-Channel Hourly Poster Scheduler
     try {
       ChannelPostService.startScheduler();
     } catch (e) {
       console.warn('ChannelPostService scheduler start notice:', e);
     }
 
-    // Start Live Market Second-by-Second Ticker Engine
     try {
       PriceService.startLiveTicker();
     } catch (e) {
       console.warn('PriceService live ticker start notice:', e);
     }
 
-    // Start Cloudflare Public Tunnel for 100% public, error-free Telegram Mini App access
     try {
       TunnelService.startTunnel().then((url) => {
         console.log(`🌐 Public Tunnel active for Telegram Mini App: ${url}/mini-modasr-arz`);
