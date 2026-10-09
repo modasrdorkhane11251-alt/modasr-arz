@@ -182,6 +182,12 @@ export class PriceService {
   private static liveTickerInterval: NodeJS.Timeout | null = null;
   private static providerHealth = new Map<string, ProviderHealth>();
 
+  // ─── Price history for computing real change % when provider reports 0 ───
+  private static priceHistory = new Map<string, Array<{ price: number; ts: number }>>();
+  private static readonly HISTORY_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+  private static readonly HISTORY_MAX_POINTS = 500;
+  private static readonly HISTORY_MIN_AGE_MS = 30 * 60 * 1000; // at least 30 min of data before we use it
+
   private static readonly PRIORITY_COINS = [
     'BTC', 'ETH', 'SOL', 'TON', 'BNB', 'XRP', 'DOGE', 'TRX', 'LTC',
     'ADA', 'SHIB', 'AVAX', 'LINK', 'DOT', 'NEAR', 'SUI', 'PEPE', 'NOT',
@@ -372,7 +378,65 @@ export class PriceService {
   }
 
   // ==========================================================================
-  // MAIN SNAPSHOT BUILDER — with crash guard
+  // PRICE HISTORY — records each fetch to compute real change % over time
+  // ==========================================================================
+
+  /**
+   * Record a price observation for a given asset key.
+   * Keeps the last 24h of data. If a point was recorded within the last 30s,
+   * it's replaced (deduplication).
+   */
+  private static recordPrice(key: string, price: number): void {
+    if (!this.isValidNumber(price) || price <= 0) return;
+    const now = Date.now();
+    let arr = this.priceHistory.get(key) || [];
+
+    // Drop entries older than 24h
+    arr = arr.filter((p) => now - p.ts < this.HISTORY_MAX_AGE_MS);
+
+    // If a point was recorded within last 30s, replace it
+    const last = arr[arr.length - 1];
+    if (last && now - last.ts < 30_000) {
+      arr[arr.length - 1] = { price, ts: now };
+    } else {
+      arr.push({ price, ts: now });
+    }
+
+    // Cap size
+    if (arr.length > this.HISTORY_MAX_POINTS) {
+      arr = arr.slice(-this.HISTORY_MAX_POINTS);
+    }
+
+    this.priceHistory.set(key, arr);
+  }
+
+  /**
+   * Compute change % between oldest recorded price and current price.
+   * Returns null if we don't have at least 30 minutes of history.
+   */
+  private static computeHistoryChange(key: string, currentPrice: number): number | null {
+    const arr = this.priceHistory.get(key);
+    if (!arr || arr.length < 2) return null;
+
+    const oldest = arr[0];
+    if (!oldest || oldest.price <= 0) return null;
+
+    const ageMs = Date.now() - oldest.ts;
+    if (ageMs < this.HISTORY_MIN_AGE_MS) return null;
+
+    if (!this.isValidNumber(currentPrice) || currentPrice <= 0) return null;
+
+    const pct = ((currentPrice - oldest.price) / oldest.price) * 100;
+    if (!Number.isFinite(pct)) return null;
+
+    // Reject obvious outliers
+    if (Math.abs(pct) > 50) return null;
+
+    return parseFloat(pct.toFixed(2));
+  }
+
+  // ==========================================================================
+  // MAIN SNAPSHOT BUILDER
   // ==========================================================================
 
   static async getUnifiedMarketSnapshot(): Promise<UnifiedMarketSnapshot> {
@@ -390,7 +454,6 @@ export class PriceService {
     }
   }
 
-  // SAFETY WRAPPER — catches any error so the process never crashes
   private static async _fetchUnifiedSnapshot(): Promise<UnifiedMarketSnapshot> {
     const t0 = Date.now();
     const errors: string[] = [];
@@ -403,7 +466,6 @@ export class PriceService {
       console.error(e?.stack || '');
       errors.push(`fatal: ${e?.message || e}`);
 
-      // Return last known snapshot if available
       if (this.unifiedSnapshot) {
         this.unifiedSnapshot.metadata.isStale = true;
         this.unifiedSnapshot.metadata.errors = errors;
@@ -467,7 +529,6 @@ export class PriceService {
 
     const coins = this.extractCoins(cryptoRes.data, tetherData.toman);
 
-    // Enrich priority coins with real 24h data from Binance (with internal guard)
     try {
       await this.enrichCoinsWithBinance24h(coins, tetherData.toman);
     } catch (e: any) {
@@ -570,6 +631,16 @@ export class PriceService {
       if (this.isValidTetherPrice(pToman)) {
         let ch = parseFloat(String(usdt.dayChange || '0')) || 0;
         if (ch === 0 && fallbackDayChange !== 0) ch = fallbackDayChange;
+
+        // Last resort: compute from our own price history
+        if (ch === 0) {
+          const histCh = this.computeHistoryChange('tether', pToman);
+          if (histCh !== null) ch = histCh;
+        }
+
+        // Record for future change calculations
+        this.recordPrice('tether', pToman);
+
         return {
           toman: Math.round(pToman),
           dayChange: ch,
@@ -588,6 +659,11 @@ export class PriceService {
       if (this.isValidTetherPrice(pToman)) {
         let ch = parseFloat(stats['usdt-rls'].dayChange || '0') || 0;
         if (ch === 0 && fallbackDayChange !== 0) ch = fallbackDayChange;
+        if (ch === 0) {
+          const histCh = this.computeHistoryChange('tether', pToman);
+          if (histCh !== null) ch = histCh;
+        }
+        this.recordPrice('tether', pToman);
         return {
           toman: pToman, dayChange: ch,
           highToman: Math.round(pToman * 1.005), lowToman: Math.round(pToman * 0.995),
@@ -620,6 +696,12 @@ export class PriceService {
         if (dayChange === 0 && high > 0 && low > 0 && high !== low) {
           dayChange = this.changeFromRange(pToman, high, low);
         }
+        // Last resort: use our own price history
+        if (dayChange === 0) {
+          const histCh = this.computeHistoryChange('dollar', pToman);
+          if (histCh !== null) dayChange = histCh;
+        }
+        this.recordPrice('dollar', pToman);
 
         return {
           toman: pToman, dayChange,
@@ -664,6 +746,12 @@ export class PriceService {
         if (ch === 0 && high > 0 && low > 0 && high !== low) {
           ch = this.changeFromRange(pToman, high, low);
         }
+        // Use price history for realistic change when provider gives 0
+        if (ch === 0) {
+          const histCh = this.computeHistoryChange(key, pToman);
+          if (histCh !== null) ch = histCh;
+        }
+        this.recordPrice(key, pToman);
 
         if (pToman > 0) target.set(pToman, high, low, ch, true, 'tgju');
       };
@@ -688,6 +776,11 @@ export class PriceService {
           if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
             ch = this.changeFromRange(usdPrice, highUsd, lowUsd);
           }
+          if (ch === 0) {
+            const histCh = this.computeHistoryChange('ons', usdPrice);
+            if (histCh !== null) ch = histCh;
+          }
+          this.recordPrice('ons', usdPrice);
           ons.set(Math.round(usdPrice), 0, 0, ch, true, 'tgju');
         }
       }
@@ -695,14 +788,20 @@ export class PriceService {
 
     const arr = fastcreatData?.result;
     if (Array.isArray(arr)) {
-      const trySet = (target: GoldExtract, pRials: number, highR: number, lowR: number, ch: number) => {
+      const trySet = (target: GoldExtract, key: string, pRials: number, highR: number, lowR: number, ch: number) => {
         if (target.isLive) return;
         const pToman = Math.round(pRials / RIALS_PER_TOMAN);
         const highT = highR > 0 ? Math.round(highR / RIALS_PER_TOMAN) : 0;
         const lowT  = lowR  > 0 ? Math.round(lowR  / RIALS_PER_TOMAN) : 0;
-        const finalCh = ch === 0 && highT > 0 && lowT > 0 && highT !== lowT
-          ? this.changeFromRange(pToman, highT, lowT)
-          : ch;
+        let finalCh = ch;
+        if (finalCh === 0 && highT > 0 && lowT > 0 && highT !== lowT) {
+          finalCh = this.changeFromRange(pToman, highT, lowT);
+        }
+        if (finalCh === 0) {
+          const histCh = this.computeHistoryChange(key, pToman);
+          if (histCh !== null) finalCh = histCh;
+        }
+        this.recordPrice(key, pToman);
         if (pToman > 0) target.set(pToman, highT, lowT, finalCh, true, 'fast_creat');
       };
 
@@ -717,23 +816,23 @@ export class PriceService {
         const lowR  = parseInt(String(item.lowest  || '0').replace(/[^0-9]/g, ''), 10);
 
         if ((title.includes('18 عیار') || title.includes('۱۸ عیار')) && this.isValidGold18Price(Math.round(pRials / RIALS_PER_TOMAN))) {
-          trySet(g18, pRials, highR, lowR, ch);
+          trySet(g18, 'gold18', pRials, highR, lowR, ch);
         } else if (title.includes('24 عیار') || title.includes('۲۴ عیار')) {
-          trySet(g24, pRials, highR, lowR, ch);
+          trySet(g24, 'gold24', pRials, highR, lowR, ch);
         } else if (title.includes('مثقال')) {
-          trySet(mes, pRials, highR, lowR, ch);
+          trySet(mes, 'mesghal', pRials, highR, lowR, ch);
         } else if (title.includes('امامی')) {
-          trySet(skE, pRials, highR, lowR, ch);
+          trySet(skE, 'sekeEmami', pRials, highR, lowR, ch);
         } else if (title.includes('بهار')) {
-          trySet(skB, pRials, highR, lowR, ch);
+          trySet(skB, 'sekeBahar', pRials, highR, lowR, ch);
         } else if (title.includes('نیم')) {
-          trySet(skN, pRials, highR, lowR, ch);
+          trySet(skN, 'sekeNim', pRials, highR, lowR, ch);
         } else if (title.includes('ربع')) {
-          trySet(skR, pRials, highR, lowR, ch);
+          trySet(skR, 'sekeRob', pRials, highR, lowR, ch);
         } else if (title.includes('گرمی')) {
-          trySet(skG, pRials, highR, lowR, ch);
+          trySet(skG, 'sekeGerami', pRials, highR, lowR, ch);
         } else if (title.includes('نقره')) {
-          trySet(silv, pRials, highR, lowR, ch);
+          trySet(silv, 'silver', pRials, highR, lowR, ch);
         }
       }
     }
@@ -758,7 +857,7 @@ export class PriceService {
         const sym = symKey.toUpperCase();
         const toman = parseFloat(String(it.irr || '0'));
         const usdt = parseFloat(String(it.usdt || '0'));
-        const dayCh = parseFloat(String(it.dayChange || '0')) || 0;
+        let dayCh = parseFloat(String(it.dayChange || '0')) || 0;
 
         if (toman > 0 || usdt > 0) {
           const finalToman = toman > 0 ? Math.round(toman)
@@ -767,6 +866,13 @@ export class PriceService {
             : (tetherToman > 0 ? parseFloat((finalToman / tetherToman).toFixed(6)) : 0);
 
           if (finalToman > 0 || finalUsd > 0) {
+            // Use price history to fill in the change % when provider reports 0
+            if (dayCh === 0 && finalToman > 0) {
+              const histCh = this.computeHistoryChange(sym.toLowerCase(), finalToman);
+              if (histCh !== null) dayCh = histCh;
+            }
+            if (finalToman > 0) this.recordPrice(sym.toLowerCase(), finalToman);
+
             const coin: CoinInfo = {
               name: it.name || PERSIAN_NAMES[sym] || sym,
               symbol: sym,
@@ -850,9 +956,16 @@ export class PriceService {
         if (existing) {
           if (!existing.irr || existing.irr === 0) existing.irr = tomanFromBinance;
           if (!existing.usdt || existing.usdt === 0) existing.usdt = lastPrice;
+
           if (!existing.dayChange || existing.dayChange === 0) {
             existing.dayChange = Number.isFinite(changePct) ? changePct : 0;
+            // If Binance also reports 0, try our history
+            if (existing.dayChange === 0 && existing.irr > 0) {
+              const histCh = this.computeHistoryChange(sym.toLowerCase(), existing.irr);
+              if (histCh !== null) existing.dayChange = histCh;
+            }
           }
+
           existing.dayHighUsd = highPrice > 0 ? highPrice : undefined;
           existing.dayLowUsd  = lowPrice  > 0 ? lowPrice  : undefined;
           existing.dayHighToman = highToman;
@@ -877,6 +990,11 @@ export class PriceService {
           coins[symUpper] = coin;
           coins[sym.toLowerCase()] = coin;
           newCoins++;
+        }
+
+        // Always record in history for future change calculations
+        if (tomanFromBinance > 0) {
+          this.recordPrice(sym.toLowerCase(), tomanFromBinance);
         }
       }
     }
@@ -934,6 +1052,11 @@ export class PriceService {
         if (ch === 0 && highUsd > 0 && lowUsd > 0 && highUsd !== lowUsd) {
           ch = this.changeFromRange(usd, highUsd, lowUsd);
         }
+        if (ch === 0) {
+          const histCh = this.computeHistoryChange(key, usd);
+          if (histCh !== null) ch = histCh;
+        }
+        this.recordPrice(key, usd);
         if (usd > 0 && usd < 10_000) {
           return {
             key, name, symbol, category: 'oil',
